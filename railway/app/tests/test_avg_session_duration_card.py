@@ -161,31 +161,49 @@ class RendererCardTests(unittest.TestCase):
         # No granularity chips on this card, because a single day's average
         # swings on a handful of visits.
         self.assertIn('id="avgDurTrendChart"', html)
-        self.assertIn("lineChart('avgDurTrendChart'", html)
-        self.assertNotIn("barChart('avgDurTrendChart'", html)
+        # Drawn by the shared renderer, which takes its canvas id from the
+        # placement rather than naming one -- see the Overview test below.
+        self.assertIn("chart:'avgDurTrendChart'", html)
+        self.assertIn("lineChart(inst.ids.chart", html)
+        self.assertNotIn("barChart(inst.ids.chart", html)
         self.assertIn("function avgDurWeekly", html)
         self.assertNotIn("avgDurGranChips", html)
-        # The card row is clickable: Total sessions, New users and Engagement
-        # rate now sit alongside Average session duration, all one module.
+        # The card row is the chart's picker: Total sessions, New users and
+        # Engagement rate sit alongside Average session duration, all one module.
         self.assertIn("AVG_DUR_METRICS", html)
         self.assertIn("metric-card", html)
         self.assertIn("Total sessions", html)
         self.assertIn("New users", html)
         self.assertIn("Engagement rate", html)
         self.assertIn("Avg session duration", html)
+        # Multi-select, like the paid-trends and Campaign Explorer cards: a
+        # click toggles that metric onto or off the chart, the selection is a
+        # Set read back in AVG_DUR_METRICS order, and the last active card
+        # cannot be turned off (an empty selection has nothing to plot).
+        self.assertIn("sel:new Set(['sessions'])", html)
+        self.assertIn("function seDefs", html)
+        self.assertIn("if (inst.sel.size === 1) return;", html)
+        self.assertIn("inst.sel.delete(k)", html)
+        self.assertIn("inst.sel.add(k)", html)
+        self.assertIn("aria-pressed=", html)
+        # Extra series ride their own hidden axes rather than being flattened
+        # against a metric of a different magnitude.
+        self.assertIn("extraScales", html)
         # Each card explains its own metric on hover, reusing the Site
         # Performance pane's tooltip bubble. There is no longer one shared line
         # under the heading, which could only ever describe the selected card.
-        self.assertIn("function avgDurTip", html)
         self.assertIn('data-tip="${tip}"', html)
         self.assertIn("ps-tip ps-tip--wide", html)
         self.assertNotIn('id="avgDurNote"', html)
         # The ? is decoration: a real button there would nest inside the card's
         # own button, which is invalid and unreachable by keyboard.
         self.assertIn('<span class="ps-info" aria-hidden="true">?</span>', html)
-        # Under a page-path scope each tooltip says which scope it is reading.
-        self.assertIn("scopedTip", html)
-        self.assertIn("pathFilterActive() ? (m.scopedTip || m.tip) : m.tip", html)
+        # One plain sentence per card, and only one -- no scoped variant, no
+        # session-weighting paragraph. The filter bar names the scope.
+        self.assertIn("How many visits the site got.", html)
+        self.assertIn("How long the average visit lasted.", html)
+        self.assertNotIn("scopedTip", html)
+        self.assertNotIn("session-weighted, weighted by", html)
         self.assertNotIn("adnote", html)
         # Ordering is the point of the request: this card now opens the pane,
         # in place of the Sessions-over-time chart that used to lead it.
@@ -196,6 +214,32 @@ class RendererCardTests(unittest.TestCase):
         self.assertLess(
             html.index('id="sec-avgduration"'), html.index('id="sec-audience"')
         )
+
+    def test_overview_website_panel_is_the_same_card(self) -> None:
+        """
+        The Overview home's "Website analytics" panel used to be a sessions-only
+        line with its own Daily/Weekly chips. It is now a second placement of
+        this card, driven by the same code against the same endpoint, so the
+        home page and the tab can't disagree.
+        """
+        from dashboard.renderers.bigquery_dashboard_renderer import (
+            render_bigquery_dashboard_page,
+        )
+
+        html = render_bigquery_dashboard_page(
+            client_slug="demo", api_client_key="demo", label="Demo",
+            use_session=True, session_email="t@e.com",
+        )
+        self.assertIn('id="ovSeCards"', html)
+        self.assertIn("seMake({ cards:'ovSeCards'", html)
+        self.assertIn("loadSeInstance(seOverview)", html)
+        # The old sessions-only line and its interval chips are gone.
+        self.assertNotIn("ovSessionsGranChips", html)
+        self.assertNotIn("ovRenderSessions", html)
+        self.assertNotIn("ovSessionsCache", html)
+        # One implementation, two placements -- not a copy.
+        self.assertEqual(html.count("function drawSeTrend"), 1)
+        self.assertEqual(html.count("const AVG_DUR_METRICS"), 1)
 
 
 if __name__ == "__main__":
