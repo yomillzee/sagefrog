@@ -35,7 +35,6 @@ also owns one `def` and, at startup, the 13 marked below are invoked from
 |---|---:|:--:|---|
 | `client_dashboard_config.py` | 25 | yes | heaviest caller |
 | `web_users.py` | 18 | yes | guarded in #297; still calls per read/write |
-| `consent_store.py` | 14 | yes | |
 | `client_insight_documents.py` | 12 | yes | |
 | `connector_config_store.py` | 12 | yes | |
 | `feature_requests.py` | 8 | **no** | lazy-only |
@@ -168,6 +167,26 @@ schema is guaranteed present. A CI guard (below) keeps them from coming back.
 client seeding, etc. are **not** schema DDL. They remain idempotent startup steps
 (or move behind the same ledger as `data:` entries if we want them recorded), but
 they never gate read/write calls either.
+
+### 6. Removed features: teardown migrations (`retired_features.py`)
+
+Deleting a feature removes its Python modules but not its tables. Those drops go
+in `retired_features.py` as `retired:<NNNN>_<slug>` migrations on the same runner
+— so a drop happens once per database, at startup, under the shared advisory
+lock, and never from a request path.
+
+This is the one place a migration is deliberately **destructive**, so two rules
+apply on top of the normal ones:
+
+* **Every statement is `DROP ... IF EXISTS`.** A database that never had the
+  feature (fresh, or staging seeded without it) must be a no-op, not a failed
+  startup.
+* **Name only what the removed feature owned.** `tests/test_retired_features.py`
+  asserts this per migration — an unguarded statement, or one naming a live
+  table, fails CI rather than production.
+
+The ledger is what makes the drop safe to leave in place forever: it runs once
+ever, so a redeploy cannot re-drop a table some later feature reuses the name of.
 
 ## Rollout plan (incremental, each a small PR)
 

@@ -506,17 +506,6 @@ def compute_agency_budget(
         if health["status"] in ("stale", "error"):
             n_data_issues += 1
 
-    # Attach each client's latest Consent & Tracking Health verdict (one batched
-    # query, best-effort — never blocks the HQ view if it fails).
-    try:
-        import consent_store
-        consent_map = consent_store.latest_health_by_slug()
-    except Exception:
-        LOGGER.warning("HQ trends: consent health lookup failed", exc_info=True)
-        consent_map = {}
-    for row in rows:
-        row["consent"] = consent_map.get(str(row["client_slug"]).strip().lower())
-
     return {
         "month_label": month_start.strftime("%B %Y"),
         "as_of": today.isoformat(),

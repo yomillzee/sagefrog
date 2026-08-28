@@ -1,6 +1,6 @@
 """Tests for the axe-core accessibility scanner and its scoping roll-up.
 
-Two layers, mirroring the consent-scanner suite:
+Two layers:
 
 * Pure tests (always run) — the vendored axe engine is present and readable, and
   the effort/aggregation math in ``scripts/a11y_audit.py`` behaves.
@@ -23,7 +23,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import a11y_scanner as ax  # noqa: E402
-import consent_scanner as sc  # noqa: E402
+import browser_scanner as sc  # noqa: E402
 import a11y_audit  # noqa: E402
 
 _BROWSER_READY = sc.playwright_available() and bool(sc._chromium_executable())

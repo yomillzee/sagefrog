@@ -6,11 +6,10 @@ rules engine, and rolls the findings up into a **scoping report** — so you can
 answer *"how big is this ADA remediation job?"* in a few minutes, with evidence,
 before you quote it.
 
-It reuses the same battle-tested Playwright/Chromium plumbing as the
-[Consent & Tracking Health scanner](CONSENT_TRACKING_HEALTH.md): the browser
-discovery, container-friendly launch flags, on-demand install, and SSRF URL guard
-are shared, so any environment that can run one scanner can run this one with no
-extra setup.
+The Playwright/Chromium plumbing lives in `railway/app/browser_scanner.py` —
+browser discovery, container-friendly launch flags, on-demand install, and the
+SSRF URL guard — shared with any other scanner that drives a real browser, so
+any environment that can run one can run this one with no extra setup.
 
 ---
 
@@ -42,9 +41,9 @@ extra setup.
 ## In the dashboard (per client)
 
 Every client's **Insights** page (`/dashboard/{slug}/settings`) carries an
-**Accessibility** card next to *Consent health*; **Open →** goes to the audit
-page at `/dashboard/{slug}/accessibility`. There an admin edits the page list —
-**seeded from the client's Consent-scan pages** when configured — and clicks **Run
+**Accessibility** card; **Open →** goes to the audit page at
+`/dashboard/{slug}/accessibility`. There an admin edits the page list —
+**carried over from the client's last audit** when there is one — and clicks **Run
 audit**. The scan runs on demand and the report renders straight back:
 
 1. A severity summary.
@@ -188,18 +187,18 @@ their own bucket so they never inflate the strict-conformance count). Override p
 run with `--tags`, or globally with the `A11Y_WCAG_TAGS` env var. To scope only
 strict AA, e.g.: `--tags wcag2a,wcag2aa,wcag21a,wcag21aa`.
 
-**Environment knobs** (all optional; the `CONSENT_SCANNER_*` ones are shared with
-the consent scanner):
+**Environment knobs** (all optional; the `BROWSER_SCANNER_*` / `SCANNER_*` ones
+live in `browser_scanner.py` and are shared by every browser-driving scanner):
 
 | Var | Effect |
 |---|---|
 | `A11Y_WCAG_TAGS`            | Default tag set when `--tags` is omitted. |
 | `A11Y_SETTLE_MS`            | ms to wait after load before running axe (default 2500). |
-| `CONSENT_SCANNER_TIMEOUT_MS`| Per-navigation timeout (default 30000). |
-| `CONSENT_SCANNER_PROXY`     | Egress proxy for the browser. |
-| `CONSENT_SCANNER_NO_SANDBOX`| `1` to pass `--no-sandbox` (auto-on as root / in the container). |
-| `CONSENT_SCANNER_IGNORE_HTTPS` | `1` to ignore TLS errors (e.g. behind a re-terminating proxy). |
-| `CONSENT_ALLOW_PRIVATE_HOSTS`  | `1` to permit scanning localhost / staging hosts (off by default as an SSRF guard). |
+| `BROWSER_SCANNER_TIMEOUT_MS`| Per-navigation timeout (default 30000). |
+| `BROWSER_SCANNER_PROXY`     | Egress proxy for the browser. |
+| `BROWSER_SCANNER_NO_SANDBOX`| `1` to pass `--no-sandbox` (auto-on as root / in the container). |
+| `BROWSER_SCANNER_IGNORE_HTTPS` | `1` to ignore TLS errors (e.g. behind a re-terminating proxy). |
+| `SCANNER_ALLOW_PRIVATE_HOSTS`  | `1` to permit scanning localhost / staging hosts (off by default as an SSRF guard). |
 
 ---
 
@@ -227,8 +226,7 @@ python -m unittest tests.test_a11y_scanner
 
 The pure tests (aggregation math, effort estimate, vendored-engine sanity) always
 run; the browser tests inject axe into a page with a known violation and are
-skipped automatically when Playwright or a Chromium binary isn't present — the
-same pattern as `tests/test_consent_scanner_browser.py`.
+skipped automatically when Playwright or a Chromium binary isn't present.
 
 ---
 
@@ -249,6 +247,6 @@ for page in result["pages"]:
     print(page["url"], page["by_impact"], "->", page["violation_count"], "rules")
 ```
 
-It degrades gracefully exactly like the consent scanner: a missing browser or an
-unreachable page is reported in-band (`available=False`, or per-page `errors`),
+It degrades gracefully: a missing browser or an unreachable page is reported
+in-band (`available=False`, or per-page `errors`),
 so a scheduled audit records a failure instead of crashing.

@@ -73,14 +73,6 @@ _TRENDS_CSS = """
     .hdot.warn { background:var(--amber); box-shadow:0 0 0 3px rgba(183,121,31,.18); }
     .hdot.bad { background:var(--danger); box-shadow:0 0 0 3px rgba(180,35,24,.16); }
     .hdot.idle { background:#cbd5e1; box-shadow:none; }
-    /* Consent verdict as a colour-coded shield icon (no text). */
-    .cshield { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; color:#94a3b8; transition:transform .12s; }
-    .cshield:hover { transform:scale(1.12); }
-    .cshield svg { width:17px; height:17px; }
-    .cshield.good { color:var(--green); }
-    .cshield.warn { color:var(--amber); }
-    .cshield.bad { color:var(--danger); }
-    .cshield.idle { color:#cbd5e1; }
     .chan { display:flex; align-items:center; gap:12px; margin:10px 0; }
     .chan-name { width:92px; font-weight:700; color:var(--navy); text-transform:capitalize; font-size:.9rem; }
     .chan-bar { flex:1; height:14px; background:#eef2f7; border-radius:7px; overflow:hidden; }
@@ -137,7 +129,7 @@ _TRENDS_CSS = """
       .status-note { font-size:.78rem; }
     }
     /* Mobile accordion: collapsed rows show the client name + a strip of small
-       colour-coded status icons (budget / website / consent); tap to expand the
+       colour-coded status icons (budget / KPI / website); tap to expand the
        full per-metric detail. Rendered from the same data as the table; only one
        of the two is shown at a time (see the media query below). */
     #atCards { display:none; }
@@ -202,7 +194,6 @@ _TRENDS_CONTENT = """
             <th class="sortable" data-key="kpi_value">Primary KPI</th>
             <th class="sortable active" data-key="pct_budget">% of budget</th>
             <th class="sortable" data-key="sessions_total">Sessions · 30d</th>
-            <th class="sortable col-icon" data-key="consent_rank">Consent</th>
           </tr></thead>
           <tbody id="atBody"></tbody>
           <tfoot id="atFoot"></tfoot>
@@ -231,24 +222,11 @@ def render_agency_trends_page(*, user_email: str) -> str:
     let kpiRange = 'month';       // month | last_week | last_30d
     let includeToday = false;     // applies to last_30d only
 
-    const CONSENT_META = { pass:{c:'#0a7f3f',l:'Healthy',rank:1}, attention:{c:'#b7791f',l:'Attention',rank:2}, fail:{c:'#b42318',l:'Critical',rank:3} };
     function sortVal(r, key) {
       if (key === 'label') return (r.label||'').toLowerCase();
-      if (key === 'consent_rank') { const m = r.consent && CONSENT_META[r.consent.health]; return m ? m.rank : null; }
       if (key === 'kpi_value') return (r.kpi && r.kpi.value != null) ? Number(r.kpi.value) : null;
       const v = r[key];
       return (v == null) ? null : Number(v);
-    }
-    const CONSENT_SHIELD = { pass:['good','Healthy'], attention:['warn','Attention'], fail:['bad','Critical'] };
-    function consentCell(r) {
-      const c = r.consent;
-      if (!c || !c.health || c.health === 'unknown') return '<span class="muted">—</span>';
-      const [cls, label] = CONSENT_SHIELD[c.health] || ['idle', c.health];
-      const v = c.violation_count || 0;
-      const tip = `Consent — ${label} · ${v} issue${v===1?'':'s'} before/after opt-out`
-        + (c.scanned_at ? ` · scanned ${String(c.scanned_at).slice(0,10)}` : '');
-      const url = `/dashboard/${encodeURIComponent(r.client_slug)}/consent`;
-      return `<a class="cshield ${cls}" href="${url}" title="${esc(tip)}" role="img" aria-label="${esc(tip)}">${ICON.shield}</a>`;
     }
     // Each client's KPI is a different metric (MQLs, Google Ads conversions,
     // ROAS, …); the value carries its own format + label so one column reads for
@@ -349,7 +327,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
     const ICON = {
       dollar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="1.5" x2="12" y2="22.5"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
       chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-      shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
       target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>',
       caret: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
     };
@@ -374,12 +351,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const txt = d ? `Website — GA4 sessions trending ${d}` : 'Website — no session data';
       return statIcon(cls, ICON.chart, txt);
     }
-    function consentIcon(r) {
-      const c = r.consent, h = c && c.health;
-      const map = { pass:['good','Healthy'], attention:['warn','Attention'], fail:['bad','Critical'] };
-      const [cls, label] = map[h] || ['idle','No data'];
-      return statIcon(cls, ICON.shield, `Consent — ${label}`);
-    }
     function kpiIcon(r) {
       const k = r.kpi;
       if (!k) return statIcon('idle', ICON.target, 'Primary KPI — not set');
@@ -398,13 +369,12 @@ def render_agency_trends_page(*, user_email: str) -> str:
         const detail = accRow('Data', healthCell(r))
           + accRow('Primary KPI', kpiCell(r))
           + accRow('% of budget', pctCell(r))
-          + accRow('Sessions · 30d', sessCell(r))
-          + accRow('Consent', consentCell(r));
+          + accRow('Sessions · 30d', sessCell(r));
         return `<div class="acc">`
           + `<div class="acc-head" role="button" tabindex="0" aria-expanded="false">`
             + `<span class="acc-title"><a class="acc-name" href="${dash}">${esc(r.label)}</a>`
             + `<span class="acc-slug">${esc(r.client_slug)}</span></span>`
-            + `<span class="acc-icons">${budgetIcon(r)}${kpiIcon(r)}${webIcon(r)}${consentIcon(r)}</span>`
+            + `<span class="acc-icons">${budgetIcon(r)}${kpiIcon(r)}${webIcon(r)}</span>`
             + `<span class="acc-caret">${ICON.caret}</span>`
           + `</div>`
           + `<div class="acc-body">${detail}</div>`
@@ -424,7 +394,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
 
       const rows = sortedRows();
       const body = document.getElementById('atBody');
-      if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="empty">No clients configured yet.</td></tr>`; }
+      if (!rows.length) { body.innerHTML = `<tr><td colspan="5" class="empty">No clients configured yet.</td></tr>`; }
       else body.innerHTML = rows.map(r => {
         const dash = `/dashboard/${encodeURIComponent(r.client_slug)}`;
         return `<tr>`
@@ -433,7 +403,6 @@ def render_agency_trends_page(*, user_email: str) -> str:
           + `<td>${kpiCell(r)}</td>`
           + `<td>${pctCell(r)}</td>`
           + `<td>${sessCell(r)}</td>`
-          + `<td class="col-icon">${consentCell(r)}</td>`
         + `</tr>`;
       }).join('');
       renderCards(rows);
@@ -441,7 +410,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       const totPct = t.monthly_budget ? Math.round(t.mtd_spend / t.monthly_budget * 100) : null;
       const totTip = `${money2(t.mtd_spend)} spent of ${money2(t.monthly_budget)} budget`;
       document.getElementById('atFoot').innerHTML = rows.length
-        ? `<tr><td>All clients</td><td></td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td><td></td></tr>`
+        ? `<tr><td>All clients</td><td></td><td></td><td><div class="pct-cell" title="${esc(totTip)}"><span class="num">${totPct==null?'—':totPct+'%'}</span></div></td><td></td></tr>`
         : '';
 
       document.querySelectorAll('#atTable th.sortable').forEach(th =>
@@ -530,7 +499,7 @@ def render_agency_trends_page(*, user_email: str) -> str:
       } catch (e) {
         document.getElementById('atSub').textContent = 'Failed to load agency trends.';
         const msg = `Could not load data (${esc(e.message||'error')}). Try refreshing.`;
-        document.getElementById('atBody').innerHTML = `<tr><td colspan="6" class="empty">${msg}</td></tr>`;
+        document.getElementById('atBody').innerHTML = `<tr><td colspan="5" class="empty">${msg}</td></tr>`;
         document.getElementById('atCards').innerHTML = `<div class="acc-empty">${msg}</div>`;
       }
     }

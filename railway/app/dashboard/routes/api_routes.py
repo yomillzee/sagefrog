@@ -532,7 +532,6 @@ def nixon_bq_settings_page(
             explorer_filters=(getattr(db_cfg, "explorer_filters", None) or ""),
             monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
             budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
-            consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
             primary_kpi=getattr(db_cfg, "primary_kpi", None),
             segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
             metric_goals=getattr(db_cfg, "metric_goals", None),

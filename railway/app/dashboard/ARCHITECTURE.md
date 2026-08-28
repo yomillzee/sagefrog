@@ -47,7 +47,7 @@ dashboard/
     api_routes.py          # /api/clients/{slug}/* JSON the dashboard self-fetches
     files_routes.py        # Files browser and insight documents
     connector_routes.py    # Connector config CRUD
-    consent_routes.py, accessibility_routes.py, notes_routes.py
+    accessibility_routes.py, notes_routes.py
     web_mentions_routes.py # Web Mentions page, alert admin, RSS ingest cron
   renderers/               # HTML builders
     bigquery_dashboard_renderer.py  # ★ THE master dashboard template
@@ -57,7 +57,7 @@ dashboard/
     tables_renderer.py     # Drill-down platform tables, GA4 row cells
     budget_tracker.py, agency_trends_renderer.py, hq_renderer.py
     lead_tracking_renderer.py, gsc_renderer.py, gtm_renderer.py, semrush_renderer.py
-    pagespeed_renderer.py, consent_renderer.py, accessibility_renderer.py
+    pagespeed_renderer.py, accessibility_renderer.py
     connectors_renderer.py, client_hours_renderer.py, linkedin_organic_renderer.py
     docs_renderer.py, files_renderer.py, notes_widget.py
     web_mentions_renderer.py        # Google Alerts / web mention reporting

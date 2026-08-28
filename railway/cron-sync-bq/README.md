@@ -68,25 +68,6 @@ $env:CLIENT_SLUG = "nixon-bq-test"
 python run_sync_bq.py
 ```
 
-## Consent & Tracking Health scans (`CRON_JOB=consent-scan-due`)
-
-The same worker can drive scheduled consent scans instead of a BigQuery sync.
-Create a **second** Railway cron service with this same root directory and set:
-
-- `CRON_JOB=consent-scan-due` — targets `/internal/consent/scan-due` instead of
-  the sync endpoints.
-- `CRON_SECRET` — same value as the main API service.
-- A schedule to taste (e.g. weekly). The endpoint scans every client whose
-  per-client cadence (daily/weekly/monthly, set on each client's Consent Health
-  page) is actually due, and is hands-off like `sync-bq-all` — it queues the
-  work and returns immediately, guarded by a Postgres lock so runs never stack.
-
-```powershell
-$env:CRON_SECRET = "your-secret"
-$env:CRON_JOB = "consent-scan-due"
-python run_sync_bq.py
-```
-
 ## Web Mentions ingest (`CRON_JOB=web-mentions`)
 
 The same worker can drive the Google Alerts RSS ingest that feeds each client's

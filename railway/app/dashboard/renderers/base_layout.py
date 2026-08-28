@@ -11,7 +11,6 @@ from dashboard.utils.urls import (
     bluesky_page_url as _bluesky_page_url,
     client_switch_target_url as _client_switch_target_url,
     connectors_page_url as _connectors_page_url,
-    consent_page_url as _consent_page_url,
     dashboard_page_url as _dashboard_page_url,
     email_performance_page_url as _email_performance_page_url,
     files_page_url as _files_page_url,
@@ -737,7 +736,6 @@ _VIEW_ICONS: dict[str, str] = {
     "event-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
     "site-performance": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20a8 8 0 10-8-8"/><path d="M4 12a8 8 0 018-8"/><line x1="12" y1="12" x2="16" y2="9"/><circle cx="12" cy="12" r="1.6"/></svg>',
     "web-mentions": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 9 9 0 01-3.8-.8L3 21l1.9-4.9A8.4 8.4 0 013 11.5 8.5 8.5 0 0112 3a8.5 8.5 0 019 8.5z"/><path d="M8.5 11.5h7"/><path d="M8.5 8.5h4"/></svg>',
-    "consent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
 }
 
 # Sidebar section tabs that expose an admin "⋮" kebab menu for editing that
@@ -862,8 +860,7 @@ def dashboard_sidebar_view_nav_html(
             items.append(f'<a class="dash-view-btn" data-tab="{tab}" href="{_esc(href)}"{hide_attr}>{inner}</a>')
     # The standalone connector pages carry a stable data-tab so an admin can
     # hide them from Advanced too (same server-side hidden set as the core tabs);
-    # a hidden one renders already display:none. Consent Health is intentionally
-    # not in the hidden set — it has its own opt-in visibility control.
+    # a hidden one renders already display:none.
     def _tab_hide(tab_key: str) -> str:
         return ' style="display:none" data-hidden="1"' if tab_key in hidden_tabs else ""
 
@@ -915,20 +912,11 @@ def dashboard_sidebar_view_nav_html(
             f'<a class="dash-view-btn" data-tab="event_tracking" href="{_esc(et)}"{_tab_hide("event_tracking")}>'
             f'{_VIEW_ICONS["event-tracking"]}<span>Event Tracking</span></a>'
         )
-    if pflags.get("show_consent"):
-        cu = _consent_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or "#"
-        items.append(
-            f'<a class="dash-view-btn" href="{_esc(cu)}">'
-            f'{_VIEW_ICONS["consent"]}<span>Consent Health</span></a>'
-        )
     # Tabs an admin hid are already rendered hidden server-side (per client, for
     # every user and browser). We publish the hidden set as a global so the
     # dashboard's deep-link init can fall back off a hidden active tab. Replaces
     # the old per-browser localStorage 'nixon_sidebar_pages:<slug>' prefs, which
-    # only hid tabs in the one browser that toggled them. Consent Health has no
-    # data-tab (its visibility is its own opt-in, not part of this hidden set).
+    # only hid tabs in the one browser that toggled them.
     import json as _json
     prefs_script = (
         "<script>window.__sfHiddenTabs="
@@ -982,7 +970,6 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
             "show_gtm": False,
             "show_pagespeed": False,
             "show_semrush": False,
-            "show_consent": False,
             "show_web_mentions": False,
         }
     status_by_type = {c.connector_type: c.status for c in configs}
@@ -1019,11 +1006,6 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         "show_gtm": _connected("gtm"),
         "show_pagespeed": _connected("pagespeed"),
         "show_semrush": _connected("semrush"),
-        # Consent & Tracking Health is opt-in per client. Most clients don't need
-        # to see it — it only clutters their sidebar — so it stays hidden unless an
-        # admin turns it on from Settings ("Show on client sidebar"). Admins reach
-        # the page (to configure / run scans) via the Settings link regardless.
-        "show_consent": _consent_sidebar_enabled(client_slug),
         # Web Mentions follows the "show only what has data" rule: the tab appears
         # once an admin has added a Google Alert for the account. Admins reach the
         # page before that through the Admin tab strip, which is where they add the
@@ -1048,15 +1030,6 @@ def _hubspot_sync_objects(configs) -> dict[str, bool]:
         return {"contacts": True, "deals": True, "emails": True}
 
 
-def _consent_sidebar_enabled(client_slug: str) -> bool:
-    try:
-        import client_dashboard_config
-        cfg = client_dashboard_config.get_config(client_slug)
-        return bool(cfg and cfg.consent_sidebar_enabled)
-    except Exception:
-        return False
-
-
 def _sidebar_hidden_tabs(client_slug: str) -> tuple[str, ...]:
     """Core sidebar tabs an admin has hidden for this client (server-side, per
     client). Empty on any error so a config hiccup never blanks the nav."""
@@ -1078,13 +1051,6 @@ def _has_web_mention_alerts(client_slug: str) -> bool:
     except Exception:
         return False
 
-
-def _has_consent_config(client_slug: str) -> bool:
-    try:
-        import consent_store
-        return consent_store.get_config(client_slug) is not None
-    except Exception:
-        return False
 
 _NAV_ICON_FILES = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -1166,8 +1132,7 @@ _ADMIN_SECTION_ICON = (
 # always-present core tabs plus the connector-gated standalone pages. A tab whose
 # connector isn't connected still lists here (checkbox = "not admin-hidden"); it
 # only appears in the sidebar once its data source is connected. Kept in step
-# with client_dashboard_config.SIDEBAR_TOGGLEABLE_TABS. (Consent Health is
-# excluded — it has its own opt-in "show on client sidebar" control.)
+# with client_dashboard_config.SIDEBAR_TOGGLEABLE_TABS.
 _SIDEBAR_TAB_EDIT_ITEMS: tuple[tuple[str, str], ...] = (
     ("overview", "Overview"),
     ("explorer", "Campaign Explorer"),
@@ -1213,12 +1178,11 @@ def _sidebar_view_as_options(*, current_email: str | None) -> str:
 # The per-client agency options used to live in a collapsible sidebar section.
 # They now live on a single "Admin" page whose tabs (rendered by
 # ``admin_top_tabs_html``) span the top of the content area. The first three tabs
-# reuse the existing per-client pages; the last two are lightweight tool pages
+# reuse the existing per-client pages; the rest are lightweight tool pages
 # served from ``/dashboard/<slug>/admin/<tab>`` (see settings_routes).
 _ADMIN_TAB_ITEMS: tuple[tuple[str, str], ...] = (
     ("connectors", "Connectors"),
     ("insights", "Insights"),
-    ("consent", "Consent Health"),
     ("web-mentions", "Web Mentions"),
     ("sidebar", "Advanced"),
     ("view-as", "View As"),
@@ -1230,7 +1194,6 @@ _ADMIN_NAV_TO_TAB: dict[str, str] = {
     "connectors": "connectors",
     "settings": "insights",
     "insights-upload": "insights",
-    "consent": "consent",
     "admin-sidebar": "sidebar",
     "admin-view-as": "view-as",
 }
@@ -1239,8 +1202,8 @@ _ADMIN_NAV_TO_TAB: dict[str, str] = {
 def admin_tab_url(
     *, tab: str, client_slug: str, access_key: str | None, use_session: bool
 ) -> str:
-    """Destination for one admin tab. Connectors/Insights/Consent reuse the
-    existing per-client pages; the three tool tabs live under ``/admin/<tab>``."""
+    """Destination for one admin tab. Connectors/Insights reuse the existing
+    per-client pages; the tool tabs live under ``/admin/<tab>``."""
     if tab == "connectors":
         return _connectors_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -1249,10 +1212,6 @@ def admin_tab_url(
         return _settings_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
         ) or f"/dashboard/{client_slug}/settings"
-    if tab == "consent":
-        return _consent_page_url(
-            client_slug=client_slug, access_key=access_key, use_session=use_session
-        ) or f"/dashboard/{client_slug}/consent"
     if tab == "web-mentions":
         return _web_mentions_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -1332,8 +1291,8 @@ def _sidebar_admin_nav_html(
     """The "Admin" bucket at the bottom of the sidebar's section nav.
 
     A labelled group (divider + eyebrow, matching the section nav's own rows)
-    holding **Settings** — the Admin page with Connectors, Insights, Consent
-    Health, Advanced and View As across the top. It used to live
+    holding **Settings** — the Admin page with Connectors, Insights, Advanced
+    and View As across the top. It used to live
     inside the footer's profile popover, which buried an entry point admins reach
     constantly; here it sits in the nav where it reads as a section of the portal.
 
@@ -1633,8 +1592,8 @@ def render_client_shell_page(
     """Shared dashboard chrome for settings, files, and other child pages.
 
     ``admin_tab`` (one of the ``_ADMIN_TAB_ITEMS`` keys) renders the Admin page's
-    top tab strip above the content for admins — used by the Connectors, Consent,
-    and admin-tool pages so they read as tabs of one Admin surface.
+    top tab strip above the content for admins — used by the Connectors and
+    admin-tool pages so they read as tabs of one Admin surface.
 
     ``include_chartjs`` vendors the same Chart.js the Overview dashboard uses, so
     a child page (e.g. Lead Tracking) can render charts identical to Overview's.
@@ -1799,7 +1758,7 @@ def render_admin_tools_page(
 ) -> str:
     """One of the Admin page's tool tabs — Advanced (sidebar) or View As —
     rendered as a card inside the shared client shell (so the top tab strip and
-    sidebar are identical to the Connectors/Insights/Consent tabs).
+    sidebar are identical to the Connectors/Insights tabs).
     """
     def _key(path: str) -> str:
         if not access_key:
@@ -3100,7 +3059,7 @@ SIDEBAR_CSS = """
     .dash-profile-item.is-active { background: rgba(255, 255, 255, 0.12); color: #fff; }
     .dash-profile-item:focus-visible { outline: 2px solid #7dd3fc; outline-offset: -2px; }
     /* The Admin page's top tab strip (light content area). Rendered above the
-       Connectors / Insights / Consent / Advanced / View As / BQ tabs so they all
+       Connectors / Insights / Advanced / View As / BQ tabs so they all
        read as one Admin surface. .dash-pop-* below style the tool-card controls
        (reused from the old popovers). */
     .admin-surface {

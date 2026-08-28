@@ -1,8 +1,8 @@
 """Automated accessibility (ADA / WCAG) scanner built on Playwright + axe-core.
 
 Drives a fresh, isolated Chromium session (via Playwright's synchronous API, so
-it runs cleanly inside a background worker thread — same model as
-:mod:`consent_scanner`), loads each page, injects Deque's **axe-core** rules
+it runs cleanly inside a background worker thread), loads each page, injects
+Deque's **axe-core** rules
 engine, and runs it against the fully-rendered DOM. axe-core reports the concrete
 WCAG success criteria a page fails, grouped by impact (critical / serious /
 moderate / minor) with a CSS-selector + failure summary for every offending node.
@@ -16,15 +16,15 @@ alt text, form labels, ARIA misuse, heading order, landmark structure); keyboard
 traps and screen-reader semantics still need a human. Every finding here is a
 *true* problem, so it's a safe floor for an estimate.
 
-This module performs the browser work only. Like :mod:`consent_scanner` it
-degrades gracefully: if Playwright or a Chromium binary is unavailable,
+This module performs the browser work only. It degrades gracefully: if
+Playwright or a Chromium binary is unavailable,
 :func:`scan_pages` returns ``available=False`` with a clear message instead of
 raising, so an audit is recorded as failed rather than crashing the caller.
 
 The Chromium launch/discovery/auto-install plumbing, the SSRF URL guard, and the
-navigation-timeout / ignore-TLS knobs are all shared with :mod:`consent_scanner`
-(same ``CONSENT_SCANNER_*`` environment variables) so a container that can run one
-scanner can run the other with no extra configuration.
+navigation-timeout / ignore-TLS knobs all live in :mod:`browser_scanner` (see its
+``BROWSER_SCANNER_*`` environment variables), shared with any other scanner that
+drives a real browser.
 
 Environment knobs specific to this scanner (all optional):
     A11Y_WCAG_TAGS       comma-separated axe tag set to run
@@ -40,9 +40,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-# Reuse the battle-tested Chromium plumbing and URL guard from the consent
-# scanner rather than duplicating it — both drive the same browser the same way.
-from consent_scanner import (
+# Chromium plumbing and the URL guard live in the shared browser module rather
+# than being duplicated per scanner.
+from browser_scanner import (
     _ignore_https,
     _launch_kwargs,
     _timeout_ms,
@@ -263,7 +263,7 @@ def scan_pages(urls: list[str], *, tags: list[str] | None = None) -> dict[str, A
     """
     tags = tags or _wcag_tags()
 
-    # Normalise + SSRF-guard every URL up front (shared with the consent scanner).
+    # Normalise + SSRF-guard every URL up front (shared browser-scanner guard).
     clean: list[str] = []
     rejected: list[dict[str, str]] = []
     for u in urls or []:

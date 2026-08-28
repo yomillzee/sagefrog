@@ -174,8 +174,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         # strip so the agency options read as tabs of one page.
         pages = self._render_all()
         expected = [
-            "Connectors", "Insights", "Consent Health", "Web Mentions",
-            "Advanced", "View As",
+            "Connectors", "Insights", "Web Mentions", "Advanced", "View As",
         ]
         for name in ("connectors", "settings"):
             self.assertEqual(
@@ -191,7 +190,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         cdc.get_config = lambda slug: types.SimpleNamespace(
             dashboard_mode="bigquery_nixon", label="Test Co",
             gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
-            consent_sidebar_enabled=False, sidebar_hidden_tabs=("ai_traffic",),
+            sidebar_hidden_tabs=("ai_traffic",),
         )
         pages = self._render_all()
         for name, html in pages.items():
@@ -211,7 +210,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         cdc.get_config = lambda slug: types.SimpleNamespace(
             dashboard_mode="bigquery_nixon", label="Test Co",
             gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
-            consent_sidebar_enabled=False, sidebar_hidden_tabs=("ai_traffic",),
+            sidebar_hidden_tabs=("ai_traffic",),
         )
         from dashboard.renderers.base_layout import render_admin_tools_page
         html = render_admin_tools_page(
@@ -231,7 +230,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         cdc.get_config = lambda slug: types.SimpleNamespace(
             dashboard_mode="bigquery_nixon", label="Test Co",
             gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
-            consent_sidebar_enabled=False, sidebar_hidden_tabs=(),
+            sidebar_hidden_tabs=(),
         )
         from dashboard.renderers.base_layout import render_admin_tools_page
         html = render_admin_tools_page(
@@ -260,7 +259,6 @@ class SidebarConsistencyTests(unittest.TestCase):
         cdc.get_config = lambda slug: types.SimpleNamespace(
             dashboard_mode="bigquery_nixon", label="Test Co",
             gcp_project_id="p", bq_mart_dataset_id="marketing_marts",
-            consent_sidebar_enabled=False,
             sidebar_hidden_tabs=("email_performance",),
         )
         from dashboard.renderers.base_layout import dashboard_sidebar_view_nav_html

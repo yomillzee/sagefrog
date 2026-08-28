@@ -40,15 +40,11 @@ def main() -> int:
     date_range = _strip_env(os.getenv("SYNC_DATE_RANGE")) or "LAST_30_DAYS"
 
     # CRON_JOB selects which job this worker runs. Unset (or "sync-bq") keeps the
-    # original BigQuery refresh behavior; "consent-scan-due" targets the Consent &
-    # Tracking Health scheduled-scan endpoint, and "web-mentions" the Google Alerts
-    # RSS ingest. Additional Railway cron services (same root dir, own schedule)
-    # drive those jobs without a second codebase.
+    # original BigQuery refresh behavior; "web-mentions" targets the Google Alerts
+    # RSS ingest. An additional Railway cron service (same root dir, own schedule)
+    # drives that job without a second codebase.
     job = (_strip_env(os.getenv("CRON_JOB")) or "sync-bq").lower()
-    if job in ("consent", "consent-scan-due"):
-        url = f"{base.rstrip('/')}/internal/consent/scan-due"
-        slug = ""  # the consent endpoint is always hands-off (all due clients)
-    elif job in ("web-mentions", "web-mentions-ingest"):
+    if job in ("web-mentions", "web-mentions-ingest"):
         url = f"{base.rstrip('/')}/internal/web-mentions/ingest-due"
         slug = ""  # polls every client that has an active Google Alerts feed
     elif slug:
