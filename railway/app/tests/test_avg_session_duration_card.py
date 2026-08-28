@@ -145,7 +145,7 @@ class FetchSessionDurationTests(unittest.TestCase):
 
 
 class RendererCardTests(unittest.TestCase):
-    def test_card_renders_above_demographics(self) -> None:
+    def test_card_leads_the_analytics_pane(self) -> None:
         from dashboard.renderers.bigquery_dashboard_renderer import (
             render_bigquery_dashboard_page,
         )
@@ -158,15 +158,13 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn("/analytics/session-duration", html)
         self.assertIn("loadSessionDuration", html)
         # The over-time half: one line per metric, session-weighted, weekly.
-        # No granularity chips on this card, unlike Sessions over time,
-        # because a single day's average swings on a handful of visits.
+        # No granularity chips on this card, because a single day's average
+        # swings on a handful of visits.
         self.assertIn('id="avgDurTrendChart"', html)
         self.assertIn("lineChart('avgDurTrendChart'", html)
         self.assertNotIn("barChart('avgDurTrendChart'", html)
         self.assertIn("function avgDurWeekly", html)
         self.assertNotIn("avgDurGranChips", html)
-        # Sessions over time keeps its own Daily/Weekly chips.
-        self.assertIn('id="sessionsGranChips"', html)
         # The card row is clickable: Total sessions, New users and Engagement
         # rate now sit alongside Average session duration, all one module.
         self.assertIn("AVG_DUR_METRICS", html)
@@ -189,13 +187,14 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn("scopedTip", html)
         self.assertIn("pathFilterActive() ? (m.scopedTip || m.tip) : m.tip", html)
         self.assertNotIn("adnote", html)
-        # Ordering is the point of the request: the card sits above Demographics.
+        # Ordering is the point of the request: this card now opens the pane,
+        # in place of the Sessions-over-time chart that used to lead it.
+        self.assertNotIn('id="sec-sessions"', html)
         self.assertLess(
-            html.index('id="sec-avgduration"'), html.index('id="sec-demographics"')
+            html.index('id="sec-avgduration"'), html.index('id="card-pages"')
         )
-        # And below Audience, which it follows.
         self.assertLess(
-            html.index('id="sec-audience"'), html.index('id="sec-avgduration"')
+            html.index('id="sec-avgduration"'), html.index('id="sec-audience"')
         )
 
 

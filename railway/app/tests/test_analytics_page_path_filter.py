@@ -104,15 +104,14 @@ class AnalyticsPagePathFilterTests(unittest.TestCase):
         plain = _render(page_path_filter=None, is_admin=True)
         self.assertIn('id="demoSectionTitle">Demographics<', plain)
 
-    def test_sessions_chart_is_relabelled_under_a_scope(self) -> None:
-        # The scoped series counts sessions per matching page, so the heading and
-        # note must say so rather than reading as site-wide traffic.
-        scoped = _render(page_path_filter="/careers", is_admin=True)
-        self.assertIn("Sessions on matching pages", scoped)
-        self.assertIn("sessionsScopeNote", scoped)
-        # Unscoped pages keep the plain heading and leave the note empty.
-        plain = _render(page_path_filter=None, is_admin=True)
-        self.assertIn("Sessions over time", plain)
+    def test_no_sessions_over_time_chart(self) -> None:
+        # The Sessions-over-time chart is gone — Sessions & engagement, whose
+        # cards name their own scope, opens the pane instead.
+        for html in (_render(page_path_filter="/careers", is_admin=True),
+                     _render(page_path_filter=None, is_admin=True)):
+            self.assertNotIn('id="sec-sessions"', html)
+            self.assertNotIn("sessionsScopeNote", html)
+            self.assertNotIn("Sessions on matching pages", html)
 
     def test_filter_html_escaped_in_editor(self) -> None:
         # A stray "<" in a pattern must not break out of the textarea/script.
