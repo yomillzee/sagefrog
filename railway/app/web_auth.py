@@ -228,15 +228,21 @@ async def require_admin(request: Request) -> WebUser:
     return user
 
 
+# Always super admins, whatever SUPER_ADMIN_EMAILS says — so the people who run
+# the portal keep the feature-requests inbox and the destructive actions even if
+# the env var is unset or mistyped on a fresh environment.
+BUILT_IN_SUPER_ADMINS = ("mikem@sagefrog.com", "andreb@sagefrog.com")
+
+
 def super_admin_emails() -> set[str]:
     """Admins allowed to perform destructive actions (e.g. deleting dashboards).
 
-    Configurable via SUPER_ADMIN_EMAILS (comma-separated); mikem@sagefrog.com is
-    always included.
+    Configurable via SUPER_ADMIN_EMAILS (comma-separated); BUILT_IN_SUPER_ADMINS
+    are always included.
     """
     raw = os.getenv("SUPER_ADMIN_EMAILS", "")
     emails = {e.strip().lower() for e in raw.split(",") if e.strip()}
-    emails.add("mikem@sagefrog.com")
+    emails.update(BUILT_IN_SUPER_ADMINS)
     return emails
 
 
