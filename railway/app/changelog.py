@@ -63,6 +63,42 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-28",
+        title="Sessions & engagement has a Daily/Weekly toggle again",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The Sessions & engagement chart can be read a day at a time "
+            "again, on the Website Analytics tab and on the Overview home."
+        ),
+        details=(
+            "Weekly is still what the chart opens on: a single day's average "
+            "session duration moves several minutes on one long visit.",
+            "Switching between Daily and Weekly re-draws what is already "
+            "loaded, so it does not go back for the numbers.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
+        title="The Events filter can be saved for a client",
+        area="Client dashboards · Website Analytics",
+        kind="new",
+        summary=(
+            "Admins can now save the events ticked in the Events dropdown as "
+            "the client's own definition of a key event, so everyone who opens "
+            "the page lands on the same set instead of re-picking it."
+        ),
+        details=(
+            "Tick the events you want counted, then hit “Save as default” at "
+            "the bottom of the dropdown. Pages, Landing pages, Traffic and "
+            "User acquisition all count key events that way from then on.",
+            "Saving with nothing ticked clears the stored set and falls back to "
+            "the events GA4 itself flags as key events.",
+            "Only admins see the button; everyone else sees the saved set and "
+            "can still change it for their own session.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
         title="Sessions & engagement plots more than one metric at a time",
         area="Client dashboards · Website Analytics",
         kind="improved",

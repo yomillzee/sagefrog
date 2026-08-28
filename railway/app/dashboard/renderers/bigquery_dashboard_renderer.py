@@ -999,6 +999,13 @@ def render_bigquery_dashboard_page(
               <button type="button" class="range-apply" id="rangeApply">Apply</button>
               <span class="range-default-status" id="rangeDefaultStatus"></span>
             </div>"""
+    # Admin-only footer inside the Events dropdown: saves the ticked event names
+    # as this client's stored key-event set, so every visitor lands on the same
+    # definition of "key events" instead of GA4's own flags.
+    key_event_default_html = "" if not session_is_admin else """<div class="range-dd-foot">
+                <button type="button" class="range-apply" id="keyEventSaveDefault">Save as default</button>
+                <span class="range-default-status" id="keyEventSaveStatus"></span>
+              </div>"""
     # Campaign Explorer allowlist (campaign names the client may see). Empty list
     # = no restriction. Escape "<" so a campaign name can't break the <script>.
     explorer_campaign_allowlist_json = json.dumps(
@@ -1288,7 +1295,7 @@ def render_bigquery_dashboard_page(
 
     panel_website = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><div class="chips seg" id="ovSeGranChips"><button type="button" class="chip" data-gran="daily">Daily</button><button type="button" class="chip active" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards metric-cards" id="ovSeCards" style="margin-bottom:12px"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
@@ -2661,6 +2668,7 @@ def render_bigquery_dashboard_page(
             <div class="ke-dd-panel" id="keyEventPanel" hidden>
               <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
               <div class="ke-dd-list" id="keyEventList"></div>
+              {key_event_default_html}
             </div>
           </div>
         </div>
@@ -2693,7 +2701,7 @@ def render_bigquery_dashboard_page(
       </div>
 
       <section id="sec-avgduration">
-        <div class="sec-head"><h2>Sessions &amp; engagement <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
+        <div class="sec-head"><h2>Sessions &amp; engagement <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="avgDurGranChips"><button type="button" class="chip" data-gran="daily">Daily</button><button type="button" class="chip active" data-gran="weekly">Weekly</button></div><span class="status" id="avgDurStatus"></span></div></div>
         <div class="cards metric-cards" id="avgDurCards" style="margin-bottom:12px"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="avgDurTrendChart"></canvas></div></div>
         <div class="cmp-legend" id="avgDurTrendLegend"></div>
@@ -2900,6 +2908,7 @@ def render_bigquery_dashboard_page(
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
+    const GA4_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/ga4/key-events')}";
     const GA4_KEY_EVENTS_SAVED = {_json_script([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
     // Website Analytics page-path scope: patterns the admin set (empty = whole
     // site). When non-empty, the page-path panels come back pre-scoped from the
@@ -7014,6 +7023,28 @@ def render_bigquery_dashboard_page(
       if (search) search.addEventListener('input', ()=>{{ keyEventSearchTerm=search.value; renderKeyEventDropdown(); }});
       document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) close(); }});
       document.addEventListener('keydown', e=>{{ if (e.key==='Escape' && !panel.hidden) {{ close(); toggle.focus(); }} }});
+      // Admin footer: store the ticked events as this client's key-event set, so
+      // every visitor lands on the same definition instead of GA4's own flags.
+      // Saving nothing clears the stored set and falls back to GA4's key events.
+      const saveBtn=document.getElementById('keyEventSaveDefault');
+      const saveStatus=document.getElementById('keyEventSaveStatus');
+      if (saveBtn) saveBtn.addEventListener('click', async ()=>{{
+        const names=[...selectedKeyEvents];
+        saveBtn.disabled=true;
+        if (saveStatus) {{ saveStatus.className='range-default-status'; saveStatus.textContent='Saving…'; }}
+        try {{
+          const r=await fetch(GA4_KEY_EVENTS_API, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{ 'Content-Type':'application/json' }},
+            body: JSON.stringify({{ event_names: names.join('\\n') }}),
+          }});
+          if (!r.ok) throw new Error(r.statusText);
+          if (saveStatus) {{ saveStatus.className='range-default-status ok'; saveStatus.textContent=names.length?'Saved as default':'Default cleared'; }}
+          setTimeout(close, 700);
+        }} catch (err) {{
+          if (saveStatus) {{ saveStatus.className='range-default-status err'; saveStatus.textContent='Save failed'; }}
+        }} finally {{ saveBtn.disabled=false; }}
+      }});
     }})();
     function renderLanding() {{
       let base=landingRows;
@@ -7256,11 +7287,11 @@ def render_bigquery_dashboard_page(
     // rate can be read against each other. Every card always shows its own
     // figure, so the row reads as four live stats whatever is plotted.
     //
-    // Weekly only, never daily: a single day's average session duration is a
-    // mean over a handful of visits, so one long session moves it several
-    // minutes and the daily points read as noise. The endpoint still returns
-    // days; the week is the smallest bucket worth plotting, and the other three
-    // metrics are bucketed the same way for a consistent x-axis.
+    // Weekly by default, with a Daily/Weekly toggle (see seBindGranChips): a
+    // single day's average session duration is a mean over a handful of visits,
+    // so one long session moves it several minutes, but the daily shape is what
+    // someone wants when they are looking at a campaign week. All four metrics
+    // bucket the same way, for a consistent x-axis.
     //
     // Each tip is one plain sentence -- these cards are the first thing a
     // client sees on the page, and a paragraph about session-weighting told
@@ -7294,9 +7325,26 @@ def render_bigquery_dashboard_page(
     // to be a sessions-only line and is now the same four cards and chart.
     // Each placement owns its own selection, cache and element ids; everything
     // below is shared between them.
-    function seMake(ids) {{ return {{ ids, sel:new Set(['sessions']), cache:{{ cur:[], prev:[] }} }}; }}
-    const seAnalytics = seMake({{ cards:'avgDurCards', chart:'avgDurTrendChart', legend:'avgDurTrendLegend', status:'avgDurStatus', warn:'avgDurCmpWarn' }});
-    const seOverview  = seMake({{ cards:'ovSeCards',   chart:'ovSessionsTrend',  legend:'ovSessionsLegend',  status:'ovSessionsStatus', warn:null }});
+    function seMake(ids) {{ return {{ ids, sel:new Set(['sessions']), gran:'weekly', cache:{{ cur:[], prev:[] }} }}; }}
+    const seAnalytics = seMake({{ cards:'avgDurCards', chart:'avgDurTrendChart', legend:'avgDurTrendLegend', status:'avgDurStatus', warn:'avgDurCmpWarn', gran:'avgDurGranChips' }});
+    const seOverview  = seMake({{ cards:'ovSeCards',   chart:'ovSessionsTrend',  legend:'ovSessionsLegend',  status:'ovSessionsStatus', warn:null, gran:'ovSeGranChips' }});
+    // Daily/Weekly, weekly by default: the endpoint returns days, and a day is
+    // worth plotting for sessions and new users, but a single day's average
+    // session duration is a mean over a handful of visits, so one long session
+    // moves it several minutes. Weekly leads; the toggle is there for anyone
+    // who wants to see which day of the week the traffic landed on. Purely a
+    // re-render -- both buckets come out of the same cached daily rows.
+    function seBindGranChips(inst) {{
+      const host = document.getElementById(inst.ids.gran);
+      if (!host) return;
+      host.querySelectorAll('.chip').forEach(btn => btn.addEventListener('click', () => {{
+        inst.gran = btn.dataset.gran;
+        host.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b === btn));
+        if (inst.cache.cur.length) renderSeTrend(inst);
+      }}));
+    }}
+    seBindGranChips(seAnalytics);
+    seBindGranChips(seOverview);
     // Selected metrics, read back in AVG_DUR_METRICS order so the series,
     // colours and legend line up however the cards were clicked. Never empty:
     // clicking the last active card is a no-op rather than an empty chart.
@@ -7382,8 +7430,22 @@ def render_bigquery_dashboard_page(
         renderSeTrend(inst);
       }}));
     }}
+    // Daily rows come back without a rate on them -- the same engaged/base
+    // division the weekly bucket does, one day at a time.
+    function avgDurDaily(daily) {{
+      return (daily || []).map(d => ({{
+        date: String(d.date),
+        sessions: num(d.sessions),
+        new_users: num(d.new_users),
+        avg_session_duration_seconds: num(d.avg_session_duration_seconds),
+        engagement_rate: num(d.engagement_base_sessions) ? num(d.engaged_sessions) / num(d.engagement_base_sessions) * 100 : 0,
+      }}));
+    }}
+    function seBucket(inst, daily) {{
+      return inst.gran === 'daily' ? avgDurDaily(daily) : avgDurWeekly(daily);
+    }}
     function renderSeTrend(inst) {{
-      drawSeTrend(inst, avgDurWeekly(inst.cache.cur), avgDurWeekly(inst.cache.prev));
+      drawSeTrend(inst, seBucket(inst, inst.cache.cur), seBucket(inst, inst.cache.prev));
     }}
     // Re-drawn (not just re-pinned) when the timeline changes, so the canvas
     // rules and the DOM pins are rebuilt from one pass.
@@ -7428,7 +7490,8 @@ def render_bigquery_dashboard_page(
         tooltip: {{
           title: items => {{
             const i = (items && items.length) ? items[0].dataIndex : -1;
-            return i < 0 ? '' : `Week of ${{String(rows[i].date)}}`;
+            if (i < 0) return '';
+            return inst.gran === 'daily' ? String(rows[i].date) : `Week of ${{String(rows[i].date)}}`;
           }},
           label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.raw)}}`,
           // How many sessions the point is built from, so a freak one-visit
@@ -7502,7 +7565,7 @@ def render_bigquery_dashboard_page(
     }}
     // ---- Overview home: a widget per section, each with a "See more" jump ----
     // The Website analytics panel is the same Sessions & engagement card the
-    // Analytics tab opens with -- four multi-select metric cards over a weekly
+    // Analytics tab opens with -- four multi-select metric cards over a Daily/Weekly
     // trend (see seOverview above) -- so the number a client reads on the home
     // page is the number they see when they click through. The AI traffic panel
     // still overlays the equivalent prior period (compareStart/compareEnd) and
