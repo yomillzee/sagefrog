@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-28",
+        title="Website Analytics opens on Sessions & engagement",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The old Sessions over time chart at the top of Website Analytics is "
+            "gone, and the Sessions & engagement card takes its place — so the "
+            "page now opens on the four headline numbers and a trend you can "
+            "switch between them."
+        ),
+        details=(
+            "Total sessions, New users, Engagement rate and Avg session duration "
+            "sit at the very top, and clicking one redraws the chart beneath it.",
+            "The sessions trend that used to lead the page duplicated the Total "
+            "sessions line on that card, so nothing has been lost.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
         title="Consent Health has been retired",
         area="Client dashboards · Admin",
         kind="improved",

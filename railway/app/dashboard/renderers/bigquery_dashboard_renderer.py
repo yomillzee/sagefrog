@@ -2691,11 +2691,11 @@ def render_bigquery_dashboard_page(
         {analytics_path_filter_edit_html}
       </div>
 
-      <section id="sec-sessions">
-        <div class="sec-head"><h2><span id="sessionsTrendTitle">Sessions over time</span> <span class="cmp-warn" id="sessionsCmpWarn" title="" hidden>&#9888;</span></h2><div class="sec-head-actions"><div class="chips seg" id="sessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><span class="status" id="sessionsTrendStatus"></span></div></div>
-        <p class="sec-note" id="sessionsScopeNote" hidden></p>
-        <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="sessionsTrendChart"></canvas></div></div>
-        <div class="cmp-legend" id="sessionsTrendLegend"></div>
+      <section id="sec-avgduration">
+        <div class="sec-head"><h2>Sessions &amp; engagement <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
+        <div class="cards metric-cards" id="avgDurCards" style="margin-bottom:12px"></div>
+        <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="avgDurTrendChart"></canvas></div></div>
+        <div class="cmp-legend" id="avgDurTrendLegend"></div>
       </section>
 
       <section id="card-pages">
@@ -2750,13 +2750,6 @@ def render_bigquery_dashboard_page(
       <section id="sec-audience">
         <div class="sec-head"><h2>Audience</h2><span class="status" id="deviceStatus"></span></div>
         <div class="col-panel" style="max-width:420px"><h3>Device type</h3><div id="deviceBars"></div></div>
-      </section>
-
-      <section id="sec-avgduration">
-        <div class="sec-head"><h2>Sessions &amp; engagement <span class="cmp-warn" id="avgDurCmpWarn" title="" hidden>&#9888;</span></h2><span class="status" id="avgDurStatus"></span></div>
-        <div class="cards metric-cards" id="avgDurCards" style="margin-bottom:12px"></div>
-        <div class="chart-wrap"><div class="chart-canvas-host" style="height:200px"><canvas id="avgDurTrendChart"></canvas></div></div>
-        <div class="cmp-legend" id="avgDurTrendLegend"></div>
       </section>
 
       <section id="sec-demographics">
@@ -3604,7 +3597,6 @@ def render_bigquery_dashboard_page(
     const CMP_WARN_TARGETS = [
       ['ga4SnapshotCmpWarn', ['google_analytics']],
       ['gscSnapshotCmpWarn', ['gsc']],
-      ['sessionsCmpWarn', ['google_analytics']],
       ['avgDurCmpWarn', ['google_analytics']],
     ];
     function refreshCmpWarns() {{
@@ -3754,21 +3746,21 @@ def render_bigquery_dashboard_page(
     );
 
     // ---- Module system (localStorage) ----
-    const ALL_MODULES = ['sessions','top_pages','traffic','audience','landing','user_acquisition','avg_duration','demographics'];
+    const ALL_MODULES = ['top_pages','traffic','audience','landing','user_acquisition','avg_duration','demographics'];
     // Element a module owns. For the four modules that share a tabbed card
     // (top_pages/landing, traffic/user_acquisition) this is the tab's pane, and
     // applyPanelCards — not applyModules — decides when it shows.
     const MODULE_SECTIONS = {{
-      sessions:'sec-sessions', top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
+      top_pages:'sec-pages', traffic:'sec-traffic', audience:'sec-audience',
       landing:'sec-landing',
       user_acquisition:'sec-useracq', avg_duration:'sec-avgduration', demographics:'sec-demographics'
     }};
 
     // Modules hidden while a page-path scope is active: they aggregate whole-site
     // GA4 sessions/users and have no page_path to scope by, so showing them next
-    // to careers-only Pages/Landing would be misleading. Sessions-over-time is NOT
-    // in this list — its daily series is served page-scoped from vw_page_path_daily
-    // (see fetch_traffic_acquisition), as are Top pages and Landing pages.
+    // to careers-only Pages/Landing would be misleading. Top pages and Landing
+    // pages are not in this list — their daily series is served page-scoped from
+    // vw_page_path_daily (see fetch_traffic_acquisition).
     // Demographics is likewise not hidden: its geography half reads the page-scoped
     // vw_ga4_geo_page_daily under a scope (see fetch_demographics), and only its
     // user-scoped age/gender panels hide — that's demoUserPanels below.
@@ -5065,17 +5057,7 @@ def render_bigquery_dashboard_page(
       }}
       // The bar takes space only when it has content: the admin editor or a scope.
       if (bar && (btn || active)) bar.hidden = false;
-      // The sessions trend stays visible under a scope, but it now counts
-      // sessions that viewed a matching page (GA4's per-page Sessions metric),
-      // so say that rather than letting it read as site-wide traffic.
       if (active) {{
-        const title = document.getElementById('sessionsTrendTitle');
-        if (title) title.textContent = 'Sessions on matching pages';
-        const snote = document.getElementById('sessionsScopeNote');
-        if (snote) {{
-          snote.hidden = false;
-          snote.textContent = 'Sessions that viewed a page matching this filter. A session that viewed more than one matching page is counted once per page, the same as GA4’s per-page Sessions metric.';
-        }}
         // Sessions & engagement names its own scope in each card's tooltip
         // (AVG_DUR_METRICS[].scopedTip), so there is nothing to say here.
         // Demographics keeps its geography half (served page-scoped) and drops
@@ -6812,63 +6794,6 @@ def render_bigquery_dashboard_page(
 
     // ---- Campaign Explorer: paid-source module (paid_* from source_platform) ----
     // ---- GA4: Traffic acquisition ----
-    // Sessions/day for the current period (solid blue, filled) with the prior
-    // period overlaid (dashed grey), aligned day-for-day by index so the shapes
-    // line up regardless of the actual calendar dates.
-    // Sessions-over-time granularity (Daily/Weekly chips). Daily rows are fetched
-    // once and re-bucketed to weeks client-side, so switching is instant and needs
-    // no extra query. Weeks start Monday; the week's label is its start date.
-    let sessionsGran = 'daily';
-    let sessionsTrendCache = {{ cur: [], prev: [] }};
-    function aggregateWeekly(daily) {{
-      if (!daily || !daily.length) return [];
-      const out = []; let cur = null;
-      for (const d of daily) {{
-        const dt = new Date(String(d.date) + 'T00:00:00');
-        const dow = (dt.getDay() + 6) % 7;            // 0 = Monday
-        const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
-        const key = `${{mon.getFullYear()}}-${{String(mon.getMonth()+1).padStart(2,'0')}}-${{String(mon.getDate()).padStart(2,'0')}}`;
-        if (!cur || cur.date !== key) {{ cur = {{ date: key, sessions: 0 }}; out.push(cur); }}
-        cur.sessions += num(d.sessions);
-      }}
-      return out;
-    }}
-    function renderSessionsTrend() {{
-      const c = sessionsTrendCache;
-      if (sessionsGran === 'weekly') drawSessionsTrend(aggregateWeekly(c.cur), aggregateWeekly(c.prev));
-      else drawSessionsTrend(c.cur, c.prev);
-    }}
-    // Re-drawn (not just re-pinned) when the timeline changes, so the canvas
-    // rules and the DOM pins are rebuilt from one pass.
-    registerAnnotatedChart(() => {{ if (sessionsTrendCache && sessionsTrendCache.cur) renderSessionsTrend(); }});
-    function drawSessionsTrend(daily, prevDaily) {{
-      clearSkelChart('sessionsTrendChart');
-      const legend=document.getElementById('sessionsTrendLegend');
-      const n=daily.length;
-      if (!n) {{ __destroyChart('sessionsTrendChart'); if(legend) legend.innerHTML=''; return; }}
-      const vals=daily.map(d=>num(d.sessions));
-      const prevVals=(prevDaily||[]).map(d=>num(d.sessions));
-      const hasPrev=prevVals.length>0;
-      const labels=daily.map(d=>String(d.date).slice(5));
-      const series=[];
-      // Previous first so the current line renders on top of it.
-      if (hasPrev) series.push({{ label:cmpSeriesLabel(), data: prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
-      series.push({{ label:'Current', data: vals, color:'#1d6fd0', fill:true }});
-      lineChart('sessionsTrendChart', labels, series, {{
-        yFmt: v => count(v),
-        tooltip: {{ label: c => `${{c.dataset.label}}: ${{count(c.raw)}} sessions` }},
-        // Full ISO dates behind the MM-DD labels, so timeline markers can be
-        // placed on the right point (and on the right week when aggregated).
-        dates: daily.map(d => String(d.date)),
-      }});
-      if (legend) {{
-        const curTot=vals.reduce((a,b)=>a+b,0), prevTot=prevVals.reduce((a,b)=>a+b,0);
-        const delta=(hasPrev&&prevTot)?((curTot-prevTot)/prevTot*100):null;
-        const deltaTxt=delta==null?'':` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
-        legend.innerHTML=`<span class="cmp-item"><span class="cmp-swatch cur"></span>Current (${{esc(currentStart.slice(5))}} – ${{esc(currentEnd.slice(5))}}) · ${{count(curTot)}} sessions${{deltaTxt}}</span>`
-          + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} (${{esc(compareMode==='prev_year'?compareStart:compareStart.slice(5))}} – ${{esc(compareMode==='prev_year'?compareEnd:compareEnd.slice(5))}}) · ${{count(prevTot)}}</span>`:'');
-      }}
-    }}
     function renderBarList(containerId, rows, valueKey, labelKey) {{
       const el=document.getElementById(containerId);
       if (!rows||!rows.length) {{ el.innerHTML='<div class="empty">No data.</div>'; return; }}
@@ -6940,32 +6865,6 @@ def render_bigquery_dashboard_page(
       pager.innerHTML=`<button type="button" class="pager-btn" data-dir="prev"${{sourcesPageNum<=1?' disabled':''}}>‹ Prev</button><span class="pager-info">Page ${{sourcesPageNum}} of ${{totalPages}}</span><button type="button" class="pager-btn" data-dir="next"${{sourcesPageNum>=totalPages?' disabled':''}}>Next ›</button>`;
       pager.querySelectorAll('.pager-btn').forEach(b=>b.onclick=()=>{{ sourcesPageNum+=b.dataset.dir==='next'?1:-1; renderTrafficSources(); }});
     }}
-    // Sessions-over-time hero chart (top of the analytics tab). Fetches the
-    // current period and the equivalent prior period (compareStart/compareEnd,
-    // always set by applyPreset) and overlays them for an at-a-glance trend.
-    async function loadSessionsTrend() {{
-      setStatus('sessionsTrendStatus','Loading…');
-      skelChart('sessionsTrendChart','trend-md-svg');
-      try {{
-        const [cur, prev] = await Promise.all([
-          getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)),
-          compareStart ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
-        ]);
-        sessionsTrendCache = {{ cur: cur.daily || [], prev: (prev && prev.daily) || [] }};
-        renderSessionsTrend();
-        setCmpWarn('sessionsCmpWarn', ['google_analytics']);
-        setStatus('sessionsTrendStatus','');
-      }} catch(err) {{ setStatus('sessionsTrendStatus',err.message||String(err),true); }}
-    }}
-    // Daily/Weekly chips for the sessions trend — re-render from cache, no refetch.
-    document.querySelectorAll('#sessionsGranChips .chip').forEach(btn =>
-      btn.addEventListener('click', () => {{
-        if (btn.dataset.gran === sessionsGran) return;
-        sessionsGran = btn.dataset.gran;
-        document.querySelectorAll('#sessionsGranChips .chip').forEach(b => b.classList.toggle('active', b === btn));
-        renderSessionsTrend();
-      }})
-    );
     async function loadTrafficAcq() {{
       setStatus('trafficAcqStatus','Loading…');
       document.getElementById('channelBars').innerHTML = skelBars(5);
@@ -7353,7 +7252,7 @@ def render_bigquery_dashboard_page(
     // chart below explain, but every card always shows its own figure so the
     // row reads as four live stats, not a menu.
     //
-    // Weekly only, unlike Sessions over time: a single day's average session
+    // Weekly only, never daily: a single day's average session
     // duration is a mean over a handful of visits, so one long session moves
     // it several minutes and the daily points read as noise. The endpoint
     // still returns days; the week is the smallest bucket worth plotting, and
@@ -7546,7 +7445,6 @@ def render_bigquery_dashboard_page(
       // starts out keeps peak concurrency down without a noticeable delay.
       const modules=getModules();
       const loaders=[];
-      if (modules.sessions)         loaders.push(loadSessionsTrend);
       if (modules.top_pages)        loaders.push(loadPages);
       if (modules.traffic)          loaders.push(loadTrafficAcq);
       if (modules.audience)         loaders.push(loadDeviceSplit);
