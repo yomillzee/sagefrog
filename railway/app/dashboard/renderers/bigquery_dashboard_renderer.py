@@ -999,6 +999,13 @@ def render_bigquery_dashboard_page(
               <button type="button" class="range-apply" id="rangeApply">Apply</button>
               <span class="range-default-status" id="rangeDefaultStatus"></span>
             </div>"""
+    # Admin-only footer inside the Events dropdown: saves the ticked event names
+    # as this client's stored key-event set, so every visitor lands on the same
+    # definition of "key events" instead of GA4's own flags.
+    key_event_default_html = "" if not session_is_admin else """<div class="range-dd-foot">
+                <button type="button" class="range-apply" id="keyEventSaveDefault">Save as default</button>
+                <span class="range-default-status" id="keyEventSaveStatus"></span>
+              </div>"""
     # Campaign Explorer allowlist (campaign names the client may see). Empty list
     # = no restriction. Escape "<" so a campaign name can't break the <script>.
     explorer_campaign_allowlist_json = json.dumps(
@@ -2661,6 +2668,7 @@ def render_bigquery_dashboard_page(
             <div class="ke-dd-panel" id="keyEventPanel" hidden>
               <input type="text" class="ke-dd-search" id="keyEventSearch" placeholder="Search events…" autocomplete="off">
               <div class="ke-dd-list" id="keyEventList"></div>
+              {key_event_default_html}
             </div>
           </div>
         </div>
@@ -2900,6 +2908,7 @@ def render_bigquery_dashboard_page(
     const LANDING_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/landing-events')}";
     const TRAFFIC_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/pages/traffic-key-events')}";
     const USER_ACQ_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/analytics/user-acq-key-events')}";
+    const GA4_KEY_EVENTS_API = "{_aurl(f'/api/clients/{api_client_key}/ga4/key-events')}";
     const GA4_KEY_EVENTS_SAVED = {_json_script([s.strip() for s in ga4_key_events.splitlines() if s.strip()])};
     // Website Analytics page-path scope: patterns the admin set (empty = whole
     // site). When non-empty, the page-path panels come back pre-scoped from the
@@ -7014,6 +7023,28 @@ def render_bigquery_dashboard_page(
       if (search) search.addEventListener('input', ()=>{{ keyEventSearchTerm=search.value; renderKeyEventDropdown(); }});
       document.addEventListener('click', e=>{{ if (!dd.contains(e.target)) close(); }});
       document.addEventListener('keydown', e=>{{ if (e.key==='Escape' && !panel.hidden) {{ close(); toggle.focus(); }} }});
+      // Admin footer: store the ticked events as this client's key-event set, so
+      // every visitor lands on the same definition instead of GA4's own flags.
+      // Saving nothing clears the stored set and falls back to GA4's key events.
+      const saveBtn=document.getElementById('keyEventSaveDefault');
+      const saveStatus=document.getElementById('keyEventSaveStatus');
+      if (saveBtn) saveBtn.addEventListener('click', async ()=>{{
+        const names=[...selectedKeyEvents];
+        saveBtn.disabled=true;
+        if (saveStatus) {{ saveStatus.className='range-default-status'; saveStatus.textContent='Saving…'; }}
+        try {{
+          const r=await fetch(GA4_KEY_EVENTS_API, {{
+            method:'POST', credentials:'same-origin',
+            headers:{{ 'Content-Type':'application/json' }},
+            body: JSON.stringify({{ event_names: names.join('\\n') }}),
+          }});
+          if (!r.ok) throw new Error(r.statusText);
+          if (saveStatus) {{ saveStatus.className='range-default-status ok'; saveStatus.textContent=names.length?'Saved as default':'Default cleared'; }}
+          setTimeout(close, 700);
+        }} catch (err) {{
+          if (saveStatus) {{ saveStatus.className='range-default-status err'; saveStatus.textContent='Save failed'; }}
+        }} finally {{ saveBtn.disabled=false; }}
+      }});
     }})();
     function renderLanding() {{
       let base=landingRows;
