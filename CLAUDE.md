@@ -99,6 +99,30 @@ asked for fresh data. Tunables: `GTM_QUOTA_QPS`, `GTM_QUOTA_BURST`,
 
 ## Deploy
 
+### PR bodies come from the template
+
+`.github/pull_request_template.md` is the body's shape — prose (what someone was
+living with, what changed, the judgement calls), then a Notes section for what a
+reviewer can't get from the diff, then two one-line confirmations (changelog
+entry, how it was verified). `gh pr create` without `--body` opens it prefilled;
+when passing `--body`, follow the same shape and drop the HTML comments.
+
+### "merge it" means merge it
+
+`main` requires a PR but **zero approvals**, so no `--admin` bypass is needed.
+When the user says "merge it" / "ship it" / "push it", do the whole thing without
+checking back:
+
+```bash
+gh pr merge --squash --auto --delete-branch
+```
+
+`--auto` queues the merge and it lands by itself the moment `test` and `guard` go
+green — don't sit and poll for the checks, and don't report back mid-flight. If
+the checks actually **fail**, fix them and let it merge; don't reach for
+`--admin` to force a red build through. `--admin` is only for a genuinely stuck
+required check the user has said to skip.
+
 Merges to `main` trigger the Railway deploy. 500s referencing
 `web_users.ensure_schema` / `DeadlockDetected` in deploy logs are a pre-existing
 Postgres locking issue in the auth path, unrelated to renderer/frontend changes.

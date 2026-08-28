@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "scratch-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8931",
+        "--directory",
+        "C:/Users/Mjmil/AppData/Local/Temp/claude/E--Cursor-Portal-sagefrog/5da07eea-7fb8-4395-8e37-2a3a9542b13c/scratchpad"
+      ],
+      "port": 8931
+    }
+  ]
+}
