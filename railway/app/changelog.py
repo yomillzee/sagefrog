@@ -63,6 +63,22 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-28",
+        title="Sessions & engagement has a Daily/Weekly toggle again",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The Sessions & engagement chart can be read a day at a time "
+            "again, on the Website Analytics tab and on the Overview home."
+        ),
+        details=(
+            "Weekly is still what the chart opens on: a single day's average "
+            "session duration moves several minutes on one long visit.",
+            "Switching between Daily and Weekly re-draws what is already "
+            "loaded, so it does not go back for the numbers.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
         title="Sessions & engagement plots more than one metric at a time",
         area="Client dashboards · Website Analytics",
         kind="improved",

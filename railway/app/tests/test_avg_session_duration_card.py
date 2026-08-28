@@ -157,9 +157,9 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn('id="sec-avgduration"', html)
         self.assertIn("/analytics/session-duration", html)
         self.assertIn("loadSessionDuration", html)
-        # The over-time half: one line per metric, session-weighted, weekly.
-        # No granularity chips on this card, because a single day's average
-        # swings on a handful of visits.
+        # The over-time half: one line per metric, session-weighted, bucketed
+        # weekly by default with a Daily/Weekly toggle that re-renders from the
+        # cached daily rows.
         self.assertIn('id="avgDurTrendChart"', html)
         # Drawn by the shared renderer, which takes its canvas id from the
         # placement rather than naming one -- see the Overview test below.
@@ -167,7 +167,9 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn("lineChart(inst.ids.chart", html)
         self.assertNotIn("barChart(inst.ids.chart", html)
         self.assertIn("function avgDurWeekly", html)
-        self.assertNotIn("avgDurGranChips", html)
+        self.assertIn("function avgDurDaily", html)
+        self.assertIn('id="avgDurGranChips"', html)
+        self.assertIn("gran:'weekly'", html)
         # The card row is the chart's picker: Total sessions, New users and
         # Engagement rate sit alongside Average session duration, all one module.
         self.assertIn("AVG_DUR_METRICS", html)
@@ -233,7 +235,9 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn('id="ovSeCards"', html)
         self.assertIn("seMake({ cards:'ovSeCards'", html)
         self.assertIn("loadSeInstance(seOverview)", html)
-        # The old sessions-only line and its interval chips are gone.
+        # The old sessions-only line is gone; the panel keeps interval chips,
+        # now the shared card's own (weekly by default).
+        self.assertIn('id="ovSeGranChips"', html)
         self.assertNotIn("ovSessionsGranChips", html)
         self.assertNotIn("ovRenderSessions", html)
         self.assertNotIn("ovSessionsCache", html)
