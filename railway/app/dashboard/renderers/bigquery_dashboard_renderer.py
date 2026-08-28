@@ -1288,7 +1288,8 @@ def render_bigquery_dashboard_page(
 
     panel_website = f"""
       <section class="ov-panel">
-        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><div class="chips seg" id="ovSessionsGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
+        <div class="cards metric-cards" id="ovSeCards" style="margin-bottom:12px"></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovSessionsTrend"></canvas></div></div>
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>"""
@@ -5058,8 +5059,9 @@ def render_bigquery_dashboard_page(
       // The bar takes space only when it has content: the admin editor or a scope.
       if (bar && (btn || active)) bar.hidden = false;
       if (active) {{
-        // Sessions & engagement names its own scope in each card's tooltip
-        // (AVG_DUR_METRICS[].scopedTip), so there is nothing to say here.
+        // Sessions & engagement says nothing about the scope: the filter bar
+        // right above it already names the pages, and its card tooltips are
+        // deliberately one plain sentence each.
         // Demographics keeps its geography half (served page-scoped) and drops
         // age/gender, which are user-scoped in GA4 with no page to scope by —
         // so the section is geography only, and says so.
@@ -7246,46 +7248,62 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- GA4: Sessions & engagement ----
-    // One card each for Total sessions, New users, Engagement rate and Avg
-    // session duration, all read off the same session-duration endpoint's
-    // daily rows -- clicking a card swaps which one the note above and the
-    // chart below explain, but every card always shows its own figure so the
-    // row reads as four live stats, not a menu.
+    // Four cards -- Total sessions, New users, Engagement rate and Avg session
+    // duration -- read off one endpoint's daily rows, above a trend chart they
+    // act as the picker for. They multi-select the way the paid-trends and
+    // Campaign Explorer cards do: a click toggles that metric onto or off the
+    // chart rather than replacing the selection, so sessions and engagement
+    // rate can be read against each other. Every card always shows its own
+    // figure, so the row reads as four live stats whatever is plotted.
     //
-    // Weekly only, never daily: a single day's average session
-    // duration is a mean over a handful of visits, so one long session moves
-    // it several minutes and the daily points read as noise. The endpoint
-    // still returns days; the week is the smallest bucket worth plotting, and
-    // the other three metrics are bucketed the same way for a consistent x-axis.
+    // Weekly only, never daily: a single day's average session duration is a
+    // mean over a handful of visits, so one long session moves it several
+    // minutes and the daily points read as noise. The endpoint still returns
+    // days; the week is the smallest bucket worth plotting, and the other three
+    // metrics are bucketed the same way for a consistent x-axis.
+    //
+    // Each tip is one plain sentence -- these cards are the first thing a
+    // client sees on the page, and a paragraph about session-weighting told
+    // them less than a sentence about visits. Under a page-path scope the
+    // filter bar at the top of the pane already says which pages the numbers
+    // cover, so the cards don't repeat it.
     const AVG_DUR_METRICS = [
       {{
         key:'sessions', label:'Total sessions', color:'#1d6fd0',
-        fmt: v => v==null ? '\u2014' : count(v),
-        tip:'Sessions on the site in this range, by week (starting Monday) — smooths out ordinary day-to-day swings so a trend is easier to read.',
-        scopedTip:'Sessions that started on a page matching this filter, by week (starting Monday).',
+        fmt: v => v==null ? '—' : count(v),
+        tip:'How many visits the site got.',
       }},
       {{
         key:'new_users', label:'New users', color:'#0a7f3f',
-        fmt: v => v==null ? '\u2014' : count(v),
-        tip:'Visitors GA4 had not seen before, by week (starting Monday).',
-        scopedTip:'Visitors GA4 had not seen before whose session started on a page matching this filter, by week (starting Monday).',
+        fmt: v => v==null ? '—' : count(v),
+        tip:'How many of those visitors were on the site for the first time.',
       }},
       {{
         key:'engagement_rate', label:'Engagement rate', color:'#7c3aed',
-        fmt: v => v==null ? '\u2014' : num(v).toFixed(1)+'%',
-        tip:'Share of sessions GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages — re-derived from each week\u2019s totals rather than averaging daily rates.',
-        scopedTip:'Share of the sessions that viewed a page matching this filter that GA4 counts as engaged — lasted 10+ seconds, fired a key event, or viewed 2+ pages.',
+        fmt: v => v==null ? '—' : num(v).toFixed(1)+'%',
+        tip:'The share of visits where someone actually did something — stayed a while, looked at another page, or completed something.',
       }},
       {{
         key:'avg_session_duration_seconds', label:'Avg session duration', color:'#b8600a',
-        fmt: v => v==null ? '\u2014' : fmtDuration(v),
-        tip:'How long a session lasted on average, weighted by how many sessions each landing page brought in. One point per week (starting Monday) — a single day\u2019s average swings too hard on a handful of visits to be worth reading.',
-        scopedTip:'How long a session that started on a page matching this filter lasted on average, weighted by how many sessions each of those pages brought in. One point per week (starting Monday).',
+        fmt: v => v==null ? '—' : fmtDuration(v),
+        tip:'How long the average visit lasted.',
       }},
     ];
-    let avgDurMetric = 'avg_session_duration_seconds';
-    function avgDurMetricDef() {{ return AVG_DUR_METRICS.find(m => m.key===avgDurMetric) || AVG_DUR_METRICS[0]; }}
-    let avgDurCache = {{ cur: [], prev: [] }};
+    // One implementation, two placements: the card at the top of Website
+    // Analytics, and the Overview home's "Website analytics" panel, which used
+    // to be a sessions-only line and is now the same four cards and chart.
+    // Each placement owns its own selection, cache and element ids; everything
+    // below is shared between them.
+    function seMake(ids) {{ return {{ ids, sel:new Set(['sessions']), cache:{{ cur:[], prev:[] }} }}; }}
+    const seAnalytics = seMake({{ cards:'avgDurCards', chart:'avgDurTrendChart', legend:'avgDurTrendLegend', status:'avgDurStatus', warn:'avgDurCmpWarn' }});
+    const seOverview  = seMake({{ cards:'ovSeCards',   chart:'ovSessionsTrend',  legend:'ovSessionsLegend',  status:'ovSessionsStatus', warn:null }});
+    // Selected metrics, read back in AVG_DUR_METRICS order so the series,
+    // colours and legend line up however the cards were clicked. Never empty:
+    // clicking the last active card is a no-op rather than an empty chart.
+    function seDefs(inst) {{
+      const defs = AVG_DUR_METRICS.filter(m => inst.sel.has(m.key));
+      return defs.length ? defs : [AVG_DUR_METRICS[0]];
+    }}
     // Weeks start Monday, and each figure is re-weighted (or summed) from its
     // days' sessions: averaging the daily averages would let a dead Sunday
     // count for as much as a busy Tuesday.
@@ -7334,109 +7352,137 @@ def render_bigquery_dashboard_page(
       if (key === 'avg_session_duration_seconds') return secs / sess;
       return null;
     }}
-    // What a card says on hover. Under a page-path scope every one of these
-    // metrics reads only the matching pages, so the scoped sentence is the one
-    // that explains it. Every card carries its own, rather than one line under
-    // the heading that could only describe whichever card was selected.
-    function avgDurTip(m) {{
-      return (pathFilterActive() ? (m.scopedTip || m.tip) : m.tip) || '';
-    }}
-    function renderAvgDurCards() {{
-      const host = document.getElementById('avgDurCards');
+    function renderSeCards(inst) {{
+      const host = document.getElementById(inst.ids.cards);
       if (!host) return;
       host.innerHTML = AVG_DUR_METRICS.map((m, i) => {{
-        const v = avgDurMetricValue(avgDurCache.cur, m.key);
-        const pv = avgDurMetricValue(avgDurCache.prev, m.key);
-        const tip = esc(avgDurTip(m));
+        const v = avgDurMetricValue(inst.cache.cur, m.key);
+        const pv = avgDurMetricValue(inst.cache.prev, m.key);
+        const tip = esc(m.tip || '');
+        const on = inst.sel.has(m.key);
         // The first and last bubbles align to their own card edge so they stay
         // inside the panel instead of hanging off it.
         const edge = i === 0 ? ' ps-tip--start' : (i === AVG_DUR_METRICS.length - 1 ? ' ps-tip--end' : '');
-        return `<button type="button" class="card metric-card ps-tip ps-tip--wide${{edge}}${{m.key===avgDurMetric?' active':''}}" `
-          + `data-metric="${{esc(m.key)}}" data-tip="${{tip}}" aria-pressed="${{m.key===avgDurMetric?'true':'false'}}">`
+        return `<button type="button" class="card metric-card ps-tip ps-tip--wide${{edge}}${{on?' active':''}}" `
+          + `data-metric="${{esc(m.key)}}" data-tip="${{tip}}" aria-pressed="${{on?'true':'false'}}">`
           + `<div class="card-title">${{esc(m.label)}}<span class="ps-info" aria-hidden="true">?</span></div>`
           + `<div class="card-value">${{m.fmt(v)}}</div>${{deltaHtml(v,pv)}}`
           + `<span class="sr-only">${{tip}}</span></button>`;
       }}).join('');
       host.querySelectorAll('.metric-card').forEach(btn => btn.addEventListener('click', () => {{
-        if (btn.dataset.metric === avgDurMetric) return;
-        avgDurMetric = btn.dataset.metric;
+        const k = btn.dataset.metric;
+        // Last one standing stays on -- an empty selection has nothing to plot.
+        if (inst.sel.has(k)) {{ if (inst.sel.size === 1) return; inst.sel.delete(k); }}
+        else inst.sel.add(k);
         host.querySelectorAll('.metric-card').forEach(b => {{
-          const active = b === btn;
-          b.classList.toggle('active', active);
-          b.setAttribute('aria-pressed', active ? 'true' : 'false');
+          const on = inst.sel.has(b.dataset.metric);
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
         }});
-        renderAvgDurTrend();
+        renderSeTrend(inst);
       }}));
     }}
-    function renderAvgDurTrend() {{
-      drawAvgDurTrend(avgDurWeekly(avgDurCache.cur), avgDurWeekly(avgDurCache.prev));
+    function renderSeTrend(inst) {{
+      drawSeTrend(inst, avgDurWeekly(inst.cache.cur), avgDurWeekly(inst.cache.prev));
     }}
-    registerAnnotatedChart(() => {{ if (avgDurCache && avgDurCache.cur) renderAvgDurTrend(); }});
-    function drawAvgDurTrend(rows, prevRows) {{
-      clearSkelChart('avgDurTrendChart');
-      const legend = document.getElementById('avgDurTrendLegend');
-      const m = avgDurMetricDef();
+    // Re-drawn (not just re-pinned) when the timeline changes, so the canvas
+    // rules and the DOM pins are rebuilt from one pass.
+    registerAnnotatedChart(() => {{
+      if (seAnalytics.cache.cur.length) renderSeTrend(seAnalytics);
+      if (seOverview.cache.cur.length) renderSeTrend(seOverview);
+    }});
+    function drawSeTrend(inst, rows, prevRows) {{
+      clearSkelChart(inst.ids.chart);
+      const legend = document.getElementById(inst.ids.legend);
+      const defs = seDefs(inst);
+      const multi = defs.length > 1;
+      const primary = defs[0];
       const n = rows.length;
-      if (!n) {{ __destroyChart('avgDurTrendChart'); if (legend) legend.innerHTML = ''; return; }}
-      const vals = rows.map(r => num(r[m.key]));
+      if (!n) {{ __destroyChart(inst.ids.chart); if (legend) legend.innerHTML = ''; return; }}
       const sess = rows.map(r => num(r.sessions));
-      const prevVals = (prevRows || []).map(r => num(r[m.key]));
-      const hasPrev = prevVals.length > 0;
       const labels = rows.map(r => String(r.date).slice(5));
-      const series = [];
-      // Previous first so the current line draws over it.
-      if (hasPrev) series.push({{ label:cmpSeriesLabel(), data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true }});
-      series.push({{ label:'Current', data:vals, color:m.color, fill:true }});
-      lineChart('avgDurTrendChart', labels, series, {{
-        yFmt: v => m.fmt(v),
+      const hasPrev = (prevRows || []).length > 0;
+      // One metric: the prior period rides behind it, dashed, and the axis
+      // carries tick labels. Two or more: the metrics differ by orders of
+      // magnitude (sessions against a percentage), so -- the same rule the
+      // paid-trends multi-select follows -- every extra series gets its own
+      // hidden auto-scaled axis, the area fill and the ticks come off, and the
+      // shapes are the comparison. The legend carries each metric's figure and
+      // its vs-previous delta either way, so nothing is lost by dropping the
+      // dashed overlay instead of drawing two lines per metric.
+      const series = [], extraScales = {{}};
+      if (!multi) {{
+        const prevVals = (prevRows || []).map(r => num(r[primary.key]));
+        // Previous first so the current line draws over it.
+        if (hasPrev) series.push({{ label:cmpSeriesLabel(), data:prevVals.slice(0,n), color:'#9aa7bd', dashed:true, fmt:primary.fmt }});
+        series.push({{ label:primary.label, data:rows.map(r => num(r[primary.key])), color:primary.color, fill:true, fmt:primary.fmt }});
+      }} else defs.forEach((m, i) => {{
+        const axisId = i === 0 ? 'y' : ('y' + i);
+        if (i > 0) extraScales[axisId] = {{ display:false, beginAtZero:true }};
+        series.push({{ label:m.label, data:rows.map(r => num(r[m.key])), color:m.color, fmt:m.fmt, axisId }});
+      }});
+      lineChart(inst.ids.chart, labels, series, {{
+        yDisplay: !multi,
+        yFmt: v => primary.fmt(v),
+        extraScales,
         tooltip: {{
           title: items => {{
             const i = (items && items.length) ? items[0].dataIndex : -1;
             return i < 0 ? '' : `Week of ${{String(rows[i].date)}}`;
           }},
-          label: c => `${{c.dataset.label}}: ${{m.fmt(c.raw)}}`,
+          label: c => `${{c.dataset.label}}: ${{c.dataset._fmt(c.raw)}}`,
           // How many sessions the point is built from, so a freak one-visit
-          // week reads as exactly that rather than as a great week. Skipped for
-          // Total sessions, where it would just repeat the value above it.
+          // week reads as exactly that rather than as a great week. Skipped
+          // when Total sessions is itself on the chart, where it would just
+          // repeat a line above it.
           afterBody: items => {{
-            if (m.key === 'sessions') return '';
+            if (inst.sel.has('sessions')) return '';
             const i = (items && items.length) ? items[0].dataIndex : -1;
             return i < 0 ? '' : `${{count(sess[i])}} session${{sess[i] === 1 ? '' : 's'}}`;
           }},
         }},
         dates: rows.map(r => String(r.date)),
       }});
-      if (legend) {{
-        const curAgg = avgDurMetricValue(avgDurCache.cur, m.key);
-        const prevAgg = hasPrev ? avgDurMetricValue(avgDurCache.prev, m.key) : null;
-        const delta = (prevAgg != null && prevAgg !== 0) ? ((curAgg - prevAgg) / prevAgg * 100) : null;
+      if (!legend) return;
+      const range = multi ? '' : ` (${{esc(currentStart.slice(5))}} – ${{esc(currentEnd.slice(5))}})`;
+      legend.innerHTML = defs.map(m => {{
+        const cur = avgDurMetricValue(inst.cache.cur, m.key);
+        const prev = avgDurMetricValue(inst.cache.prev, m.key);
+        const delta = (cur != null && prev != null && prev !== 0) ? ((cur - prev) / prev * 100) : null;
         const deltaTxt = delta == null ? '' : ` <span class="cmp-delta ${{delta>=0?'up':'down'}}">${{delta>=0?'+':''}}${{delta.toFixed(0)}}%</span>`;
-        legend.innerHTML = `<span class="cmp-item"><span class="cmp-swatch cur"></span>Current (${{esc(currentStart.slice(5))}} \u2013 ${{esc(currentEnd.slice(5))}}) \u00b7 ${{m.fmt(curAgg)}}${{deltaTxt}}</span>`
-          + (hasPrev ? `<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} (${{esc(compareMode==='prev_year'?compareStart:compareStart.slice(5))}} \u2013 ${{esc(compareMode==='prev_year'?compareEnd:compareEnd.slice(5))}}) \u00b7 ${{m.fmt(prevAgg)}}</span>` : '');
-      }}
+        return `<span class="cmp-item"><span class="cmp-swatch" style="border-top-color:${{m.color}}"></span>${{esc(m.label)}}${{range}} · ${{m.fmt(cur)}}${{deltaTxt}}</span>`;
+      }}).join('')
+        + ((!multi && hasPrev)
+          ? `<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} (${{esc(compareMode==='prev_year'?compareStart:compareStart.slice(5))}} – ${{esc(compareMode==='prev_year'?compareEnd:compareEnd.slice(5))}}) · ${{primary.fmt(avgDurMetricValue(inst.cache.prev, primary.key))}}</span>`
+          : '');
     }}
-    async function loadSessionDuration() {{
-      setStatus('avgDurStatus','Loading\u2026');
-      document.getElementById('avgDurCards').innerHTML = skelCards(4);
-      skelChart('avgDurTrendChart','trend-md-svg');
+    async function loadSeInstance(inst) {{
+      const cards = document.getElementById(inst.ids.cards);
+      // The Overview panel is one of several optional cards, so its half of
+      // this may not be on the page at all.
+      if (!cards) return;
+      setStatus(inst.ids.status,'Loading…');
+      cards.innerHTML = skelCards(4);
+      skelChart(inst.ids.chart,'trend-md-svg');
       try {{
         const [cur, prev] = await Promise.all([
           getJson(withDatesRange(SESSION_DURATION_API, currentStart, currentEnd)),
           compareStart ? getJson(withDatesRange(SESSION_DURATION_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
         ]);
-        avgDurCache = {{ cur: (cur && cur.daily) || [], prev: (prev && prev.daily) || [] }};
-        renderAvgDurCards();
-        renderAvgDurTrend();
-        setCmpWarn('avgDurCmpWarn', ['google_analytics']);
-        const hasData = avgDurCache.cur.some(d => num(d.sessions) > 0);
-        setStatus('avgDurStatus', hasData ? '' : 'No data for this range yet.');
+        inst.cache = {{ cur: (cur && cur.daily) || [], prev: (prev && prev.daily) || [] }};
+        renderSeCards(inst);
+        renderSeTrend(inst);
+        if (inst.ids.warn) setCmpWarn(inst.ids.warn, ['google_analytics']);
+        const hasData = inst.cache.cur.some(d => num(d.sessions) > 0);
+        setStatus(inst.ids.status, hasData ? '' : 'No data for this range yet.');
       }} catch(err) {{
-        document.getElementById('avgDurCards').innerHTML = '';
-        clearSkelChart('avgDurTrendChart');
-        __destroyChart('avgDurTrendChart');
-        setStatus('avgDurStatus', err.message||String(err), true);
+        cards.innerHTML = '';
+        clearSkelChart(inst.ids.chart);
+        __destroyChart(inst.ids.chart);
+        setStatus(inst.ids.status, err.message||String(err), true);
       }}
     }}
+    function loadSessionDuration() {{ return loadSeInstance(seAnalytics); }}
     // ---- Loaders ----
     function loadAllAnalytics() {{
       // Staggered, not simultaneous: 8 modules x 1-3 sub-fetches each means
@@ -7455,12 +7501,16 @@ def render_bigquery_dashboard_page(
       loaders.forEach((fn,i)=>setTimeout(fn, i*250));
     }}
     // ---- Overview home: a widget per section, each with a "See more" jump ----
-    // The Website analytics + AI traffic panels overlay the equivalent prior
-    // period (compareStart/compareEnd) and support a Daily/Weekly interval
-    // toggle; both re-render from cache without refetching. Search Console shows
-    // branded vs. target keyword rank-distribution bands side by side.
-    let ovSessionsGran='daily', ovAiGran='daily';
-    let ovSessionsCache={{cur:[],prev:[]}}, ovAiCache={{cur:[],prev:[]}};
+    // The Website analytics panel is the same Sessions & engagement card the
+    // Analytics tab opens with -- four multi-select metric cards over a weekly
+    // trend (see seOverview above) -- so the number a client reads on the home
+    // page is the number they see when they click through. The AI traffic panel
+    // still overlays the equivalent prior period (compareStart/compareEnd) and
+    // keeps its Daily/Weekly toggle, re-rendering from cache without
+    // refetching. Search Console shows branded vs. target keyword
+    // rank-distribution bands side by side.
+    let ovAiGran='daily';
+    let ovAiCache={{cur:[],prev:[]}};
     // Collapse daily rows to one {{date,value}} per date (AI rows are per-platform,
     // so this also sums sessions across assistants for the total-traffic line).
     function ovSumByDate(rows, key) {{
@@ -7482,8 +7532,8 @@ def render_bigquery_dashboard_page(
       }}
       return out;
     }}
-    // Current-vs-previous line, aligned by index (previous mapped onto the current
-    // labels), mirroring the Website Analytics sessions hero chart.
+    // Current-vs-previous line, aligned by index (previous mapped onto the
+    // current labels).
     function ovDrawCompareTrend(chartId, legendId, curRows, prevRows, color, unit) {{
       const n=curRows.length;
       const lg=document.getElementById(legendId);
@@ -7508,12 +7558,6 @@ def render_bigquery_dashboard_page(
           + (hasPrev?`<span class="cmp-item"><span class="cmp-swatch prev"></span>${{esc(cmpSeriesLabel())}} · ${{count(prevTot)}}</span>`:'');
       }}
     }}
-    function ovRenderSessions() {{
-      const c=ovSessionsCache, wk=ovSessionsGran==='weekly';
-      ovDrawCompareTrend('ovSessionsTrend','ovSessionsLegend',
-        wk?ovAggregateWeekly(c.cur):c.cur, wk?ovAggregateWeekly(c.prev):c.prev, '#1769aa', 'sessions');
-    }}
-    registerAnnotatedChart(() => {{ if (ovSessionsCache && ovSessionsCache.cur && ovSessionsCache.cur.length) ovRenderSessions(); }});
     function ovRenderAi() {{
       const c=ovAiCache, wk=ovAiGran==='weekly';
       ovDrawCompareTrend('ovAiTrend','ovAiLegend',
@@ -7567,28 +7611,23 @@ def render_bigquery_dashboard_page(
     // the missing #ovGscBrandedLeaders before either chart drew, leaving both
     // panels blank.
     async function loadOverviewTrends() {{
-      setStatus('ovSessionsStatus','Loading…'); setStatus('ovAiStatus','Loading…');
+      // Website analytics — the shared Sessions & engagement card, which owns
+      // its own fetch, cards, chart and status line.
+      loadSeInstance(seOverview);
+      setStatus('ovAiStatus','Loading…');
       const hasPrev=!!compareStart;
       try {{
-        const [traffic, trafficPrev, aiCur, aiPrev] = await Promise.all([
-          getJson(withDatesRange(TRAFFIC_ACQ_API, currentStart, currentEnd)).catch(()=>({{daily:[]}})),
-          hasPrev ? getJson(withDatesRange(TRAFFIC_ACQ_API, compareStart, compareEnd)).catch(()=>null) : Promise.resolve(null),
+        const [aiCur, aiPrev] = await Promise.all([
           getJson(withDatesRange(AI_TRAFFIC_DAILY_API, currentStart, currentEnd)).then(d=>d.rows||[]).catch(()=>[]),
           hasPrev ? getJson(withDatesRange(AI_TRAFFIC_DAILY_API, compareStart, compareEnd)).then(d=>d.rows||[]).catch(()=>[]) : Promise.resolve([]),
         ]);
-        // Website analytics — sessions, current vs previous.
-        ovSessionsCache={{ cur: ovSumByDate(traffic.daily||[],'sessions'), prev: ovSumByDate((trafficPrev&&trafficPrev.daily)||[],'sessions') }};
-        ovRenderSessions();
-        const sTot=ovSessionsCache.cur.reduce((s,d)=>s+num(d.value),0);
-        setStatus('ovSessionsStatus', sTot?count(sTot)+' sessions':'No data for this range yet.');
         // AI traffic — total AI sessions, current vs previous.
         ovAiCache={{ cur: ovSumByDate(aiCur,'sessions'), prev: ovSumByDate(aiPrev,'sessions') }};
         ovRenderAi();
         const aTot=ovAiCache.cur.reduce((s,d)=>s+num(d.value),0);
         setStatus('ovAiStatus', aTot?count(aTot)+' sessions':'No AI traffic in this range.');
       }} catch(err) {{
-        const msg=err.message||String(err);
-        setStatus('ovSessionsStatus', msg, true); setStatus('ovAiStatus', msg, true);
+        setStatus('ovAiStatus', err.message||String(err), true);
       }}
     }}
     // Search Console — branded & target keyword leaderboard (top by impressions) plus
@@ -7629,15 +7668,9 @@ def render_bigquery_dashboard_page(
       // Site performance scorecard (only present when the connector is on).
       loadOverviewPagespeed();
     }}
-    // Daily/Weekly interval toggles for the two overview trend panels.
-    document.querySelectorAll('#ovSessionsGranChips .chip').forEach(btn=>
-      btn.addEventListener('click',()=>{{
-        if (btn.dataset.gran===ovSessionsGran) return;
-        ovSessionsGran=btn.dataset.gran;
-        document.querySelectorAll('#ovSessionsGranChips .chip').forEach(b=>b.classList.toggle('active', b===btn));
-        ovRenderSessions();
-      }})
-    );
+    // Daily/Weekly interval toggle for the AI traffic panel. The Website
+    // analytics panel has none: it is the Sessions & engagement card, which is
+    // weekly-only for the reason spelled out above it.
     document.querySelectorAll('#ovAiGranChips .chip').forEach(btn=>
       btn.addEventListener('click',()=>{{
         if (btn.dataset.gran===ovAiGran) return;

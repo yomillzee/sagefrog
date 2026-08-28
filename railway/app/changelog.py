@@ -63,6 +63,33 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-28",
+        title="Sessions & engagement plots more than one metric at a time",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The four cards on Sessions & engagement now stack on the chart "
+            "instead of replacing each other, their explanations are one plain "
+            "sentence each, and the Overview home page shows the same card "
+            "instead of its own sessions line."
+        ),
+        details=(
+            "Click a second card and both lines are drawn together, each on its "
+            "own scale, so sessions and engagement rate can be compared by "
+            "shape; the legend carries every selected metric and its change vs "
+            "the previous period. Clicking the last active card leaves it on.",
+            "With one card selected the chart still overlays the previous "
+            "period as a dashed line, as before.",
+            "Hover text is now a single sentence a client can read at a glance "
+            "— “How long the average visit lasted” rather than a "
+            "paragraph on session weighting.",
+            "The Overview home’s Website analytics panel is now this same "
+            "card, so the number there and the number on the tab always agree. "
+            "It loses its Daily / Weekly toggle, because this chart is weekly "
+            "by design.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
         title="Website Analytics opens on Sessions & engagement",
         area="Client dashboards · Website Analytics",
         kind="improved",
