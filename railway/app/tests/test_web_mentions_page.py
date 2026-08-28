@@ -228,6 +228,16 @@ class PageTests(unittest.TestCase):
         parsed = _form_nesting(_render(report, admin=True))
         self.assertNotIn("/dashboard/acme/web-mentions/sync", parsed.actions)
 
+    def test_each_active_alert_offers_its_own_sync(self):
+        report = _report(alerts=[
+            _alert(1, "EOS Worldwide", "brand"),
+            _alert(2, "Retired", "industry", active=False),
+        ])
+        parsed = _form_nesting(_render(report, admin=True))
+        self.assertIn("/dashboard/acme/web-mentions/sync?alert=1", parsed.actions)
+        # An inactive alert is not polled at all, so it offers no Sync.
+        self.assertNotIn("/dashboard/acme/web-mentions/sync?alert=2", parsed.actions)
+
     def test_flash_messages_render(self):
         self.assertIn("Alert saved.", _render(_report(), admin=True, flash="Alert saved."))
         self.assertIn("Bad feed", _render(_report(), admin=True, flash_error="Bad feed"))
