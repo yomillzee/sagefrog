@@ -176,7 +176,7 @@ class IngestIsolationTests(unittest.TestCase):
         store.insert_mentions = self._insert
 
     def test_a_failing_feed_is_recorded_and_the_next_one_still_runs(self):
-        def fake_fetch(url):
+        def fake_fetch(url, *, timeout=None):
             self.fetched.append(url)
             if len(self.fetched) == 1:
                 raise RuntimeError("The feed returned 404 — the Google Alert may have been deleted.")
@@ -193,7 +193,7 @@ class IngestIsolationTests(unittest.TestCase):
         self.assertEqual([(1, False), (2, True)], [(r[0], r[1]) for r in self.recorded])
 
     def test_a_malformed_feed_is_a_recorded_error_not_a_crash(self):
-        service.fetch_feed = lambda url: b"<feed><entry>"
+        service.fetch_feed = lambda url, *, timeout=None: b"<feed><entry>"
         result = service.ingest_alert(_alert(7))
         self.assertFalse(result["ok"])
         self.assertIn("not valid XML", result["error"])
@@ -207,6 +207,38 @@ class IngestIsolationTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("Re-paste", result["error"])
         self.assertEqual(self.fetched, [])
+
+
+class OutcomeMessageTests(unittest.TestCase):
+    """What the admin is told after a feed is polled in front of them."""
+
+    def setUp(self):
+        from dashboard.routes.web_mentions_routes import _outcome_message
+
+        self.msg = _outcome_message
+
+    def test_new_results_are_counted(self):
+        saved, error = self.msg("EOS", {"ok": True, "new": 12, "seen": 12})
+        self.assertIn("12 mentions found", saved)
+        self.assertEqual(error, "")
+        saved, _ = self.msg("EOS", {"ok": True, "new": 1, "seen": 1})
+        self.assertIn("1 mention found", saved)   # not "1 mentions"
+
+    def test_a_working_but_quiet_feed_says_so(self):
+        saved, error = self.msg("EOS", {"ok": True, "new": 0, "seen": 8})
+        self.assertIn("nothing new", saved)
+        self.assertEqual(error, "")
+        saved, error = self.msg("EOS", {"ok": True, "new": 0, "seen": 0})
+        self.assertIn("reachable but empty", saved)
+        self.assertEqual(error, "")
+
+    def test_a_broken_feed_still_confirms_the_alert_was_saved(self):
+        saved, error = self.msg(
+            "EOS", {"ok": False, "error": "The feed returned 404 \u2014 the alert may be deleted."}
+        )
+        self.assertEqual(saved, "")
+        self.assertIn("saved", error)      # the row is not lost
+        self.assertIn("404", error)        # …and the reason is named
 
 
 if __name__ == "__main__":

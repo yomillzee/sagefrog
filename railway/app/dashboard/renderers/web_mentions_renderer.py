@@ -69,6 +69,7 @@ _EXTRA_CSS = """
 .wm-wrap .sec-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
 .wm-wrap .sec-head h2 { margin:0; font-size:1rem; font-weight:750; color:var(--navy); display:flex; align-items:center; }
 .wm-wrap .sec-head .status { margin:0; color:var(--muted); font-size:.78rem; text-align:right; flex-shrink:0; }
+.wm-wrap .sec-head-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
 .wm-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#2563eb; margin-right:8px; }
 
 /* KPI cards */
@@ -443,6 +444,15 @@ def _admin_section(report: WebMentionsReport) -> str:
             for key in store.CATEGORIES
         )
         toggle_label = "Deactivate" if alert.active else "Activate"
+        # Re-check one feed without re-polling the rest — the tool for "I just
+        # fixed this URL". Only active alerts are polled at all, so an inactive
+        # row does not offer it.
+        sync_row = (
+            f'<form method="post" action="{action}/sync?alert={alert.id}">'
+            '<button type="submit" class="wm-btn link">Sync</button></form>'
+            if alert.active
+            else ""
+        )
         delete_btn = (
             ""
             if count
@@ -467,6 +477,7 @@ def _admin_section(report: WebMentionsReport) -> str:
             f"<td>{_alert_status_html(alert)}</td>"
             f'<td style="text-align:right">{_fmt_int(count)}</td>'
             '<td><div class="wm-actions">'
+            f"{sync_row}"
             f'<form method="post" action="{action}/alerts/{alert.id}">'
             f'<input type="hidden" name="active" value="{"0" if alert.active else "1"}">'
             f'<button type="submit" class="wm-btn link">{toggle_label}</button></form>'
@@ -483,8 +494,12 @@ def _admin_section(report: WebMentionsReport) -> str:
         else '<p class="wm-empty">No alerts yet — add the first one below.</p>'
     )
 
+    # Its own form, and it must stay OUT of the add-alert form below: nested
+    # forms are invalid HTML, and a browser drops the inner tag rather than
+    # nesting them — which silently turns this into a second submit button for
+    # whichever form encloses it.
     sync_button = (
-        f'<form method="post" action="{action}/sync" style="display:inline">'
+        f'<form method="post" action="{action}/sync">'
         '<button type="submit" class="wm-btn ghost">Sync now</button></form>'
         if report.active_alerts
         else ""
@@ -493,7 +508,11 @@ def _admin_section(report: WebMentionsReport) -> str:
     return f"""
       <section class="wm-admin">
         <div class="sec-head"><h2>Monitored alerts</h2>
-          <span class="status">admins only &middot; {_fmt_int(len(report.alerts))} configured</span></div>
+          <div class="sec-head-actions">
+            <span class="status">admins only &middot; {_fmt_int(len(report.alerts))} configured</span>
+            {sync_button}
+          </div>
+        </div>
         {table}
         <form method="post" action="{action}/alerts" class="wm-admin-grid">
           <label>Alert name
@@ -506,12 +525,13 @@ def _admin_section(report: WebMentionsReport) -> str:
             <input type="url" name="feed_url" placeholder="https://www.google.com/alerts/feeds/…" required></label>
           <div class="wm-actions">
             <button type="submit" class="wm-btn">Add alert</button>
-            {sync_button}
           </div>
         </form>
         <p class="wm-note" style="margin:16px 0 0">In Google Alerts, open an alert's pencil
           icon, set <strong>Deliver to</strong> to <strong>RSS feed</strong>, save, then copy the
-          feed link from the RSS icon. Feeds are polled on the daily schedule; the URL is stored
+          feed link from the RSS icon. A new alert is checked straight away, so you find out
+          immediately whether the URL works; after that feeds are polled on the daily schedule,
+          and <strong>Sync</strong> on any row re-checks just that feed. The URL is stored
           encrypted and never sent to a browser. Deactivating an alert stops polling and
           <strong>keeps every mention it already found</strong>.</p>
       </section>

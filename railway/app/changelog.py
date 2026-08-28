@@ -63,6 +63,36 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-28",
+        title="A new Web Mentions alert is checked the moment you add it",
+        area="Web Mentions",
+        kind="improved",
+        summary=(
+            "Adding an alert now fetches its feed straight away and tells you what "
+            "happened, so a wrong RSS URL is caught while you are still looking at "
+            "the form instead of failing quietly overnight."
+        ),
+        details=(
+            "The confirmation says what the feed returned — “12 mentions found”, or "
+            "the actual error if it could not be read.",
+            "A feed that fails still saves the alert, so a momentary outage never "
+            "loses what you just typed.",
+            "Each alert has its own Sync button for re-checking one feed after you "
+            "fix its URL, without re-polling the rest.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
+        title="“Sync now” on Web Mentions works",
+        area="Web Mentions",
+        kind="fixed",
+        summary=(
+            "The Sync now button did nothing when clicked — it now fetches the "
+            "account's Google Alerts feeds straight away instead of waiting for "
+            "the next daily run."
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
         title="Web Mentions brings Google Alerts into the dashboard",
         area="Web Mentions",
         kind="new",

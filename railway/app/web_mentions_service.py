@@ -23,6 +23,7 @@ Three shapes of real-world feed damage drive most of the code below:
     ingest, and a failing feed never removes what it already collected.
 
 Tunables: ``WEB_MENTIONS_TIMEOUT_SECONDS`` (default 20),
+``WEB_MENTIONS_INLINE_TIMEOUT_SECONDS`` for a fetch an admin waits on (default 10),
 ``WEB_MENTIONS_MAX_ENTRIES`` per feed per run (default 100),
 ``WEB_MENTIONS_ALLOW_ANY_FEED=1`` to accept non-Google feed URLs.
 """
@@ -43,6 +44,11 @@ import web_mentions_store as store
 log = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 20.0
+# A shorter cap for a fetch an admin is waiting on (adding an alert, clicking
+# Sync on one row). The scheduled run can afford to wait out a slow feed; a
+# person staring at a form cannot, and "saved, it'll sync on the next run" is a
+# better answer than a hung page.
+_DEFAULT_INLINE_TIMEOUT = 10.0
 _DEFAULT_MAX_ENTRIES = 100
 _MAX_FEED_BYTES = 5 * 1024 * 1024
 
@@ -322,11 +328,12 @@ def _entry_from_node(node) -> dict[str, Any] | None:
 # Fetching
 # ---------------------------------------------------------------------------
 
-def fetch_feed(url: str) -> bytes:
+def fetch_feed(url: str, *, timeout: float | None = None) -> bytes:
     """GET one feed. Raises ``RuntimeError`` with a message fit for the admin UI."""
     import httpx
 
-    timeout = _env_float("WEB_MENTIONS_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT)
+    if timeout is None:
+        timeout = _env_float("WEB_MENTIONS_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT)
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             resp = client.get(url, headers={"User-Agent": _USER_AGENT, "Accept": "application/atom+xml, application/rss+xml, application/xml;q=0.9, */*;q=0.5"})
@@ -354,7 +361,12 @@ def fetch_feed(url: str) -> bytes:
 # Ingestion
 # ---------------------------------------------------------------------------
 
-def ingest_alert(alert: store.Alert) -> dict[str, Any]:
+def inline_timeout() -> float:
+    """Fetch timeout for a poll an admin is waiting on."""
+    return _env_float("WEB_MENTIONS_INLINE_TIMEOUT_SECONDS", _DEFAULT_INLINE_TIMEOUT)
+
+
+def ingest_alert(alert: store.Alert, *, timeout: float | None = None) -> dict[str, Any]:
     """Poll one feed and store what is new. Never raises.
 
     The result dict is what both the cron summary and the admin panel's "Sync
@@ -376,7 +388,7 @@ def ingest_alert(alert: store.Alert) -> dict[str, Any]:
         store.record_fetch_result(alert.id, ok=False, error_message=outcome["error"])
         return outcome
     try:
-        payload = fetch_feed(alert.feed_url)
+        payload = fetch_feed(alert.feed_url, timeout=timeout)
         entries = parse_feed(payload)
         max_entries = _env_int("WEB_MENTIONS_MAX_ENTRIES", _DEFAULT_MAX_ENTRIES)
         entries = entries[:max_entries]
@@ -392,13 +404,15 @@ def ingest_alert(alert: store.Alert) -> dict[str, Any]:
     return outcome
 
 
-def ingest_client(client_slug: str, *, alert_id: int | None = None) -> dict[str, Any]:
+def ingest_client(
+    client_slug: str, *, alert_id: int | None = None, timeout: float | None = None
+) -> dict[str, Any]:
     """Poll every active feed for one client. One bad feed never stops the rest."""
     slug = (client_slug or "").strip().lower()
     alerts = store.list_alerts(slug, active_only=True)
     if alert_id:
         alerts = [a for a in alerts if a.id == int(alert_id)]
-    results = [ingest_alert(alert) for alert in alerts]
+    results = [ingest_alert(alert, timeout=timeout) for alert in alerts]
     return {
         "client_slug": slug,
         "alerts": len(results),

@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import unittest
 from datetime import UTC, date, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -20,6 +21,32 @@ if str(APP_DIR) not in sys.path:
 import web_mentions_service as service  # noqa: E402
 import web_mentions_store as store  # noqa: E402
 from dashboard.renderers import web_mentions_renderer as R  # noqa: E402
+
+class _FormNesting(HTMLParser):
+    """Tracks <form> depth and records the deepest nesting seen."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.depth = 0
+        self.max_depth = 0
+        self.actions: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "form":
+            self.depth += 1
+            self.max_depth = max(self.max_depth, self.depth)
+            self.actions.append(dict(attrs).get("action", ""))
+
+    def handle_endtag(self, tag):
+        if tag == "form" and self.depth:
+            self.depth -= 1
+
+
+def _form_nesting(html: str) -> _FormNesting:
+    parser = _FormNesting()
+    parser.feed(html)
+    return parser
+
 
 FEED_URL = "https://www.google.com/alerts/feeds/01234567890123456789/9876543210"
 
@@ -181,6 +208,35 @@ class PageTests(unittest.TestCase):
         ])
         self.assertIn("feed failing", _render(report, admin=True))
         self.assertNotIn("feed failing", _render(report, admin=False))
+
+    def test_no_form_is_nested_inside_another(self):
+        """Nested forms are invalid HTML: the browser drops the inner tag, and its
+        submit button silently posts the enclosing form instead. That is what
+        turned "Sync now" into a second Add-alert button that never synced."""
+        for admin in (True, False):
+            parsed = _form_nesting(_render(_report(), admin=admin))
+            self.assertLessEqual(parsed.max_depth, 1,
+                                 f"a <form> is nested inside another (admin={admin})")
+
+    def test_sync_now_posts_to_the_sync_endpoint(self):
+        parsed = _form_nesting(_render(_report(), admin=True))
+        self.assertIn("/dashboard/acme/web-mentions/sync", parsed.actions)
+        self.assertIn("/dashboard/acme/web-mentions/alerts", parsed.actions)
+
+    def test_sync_now_is_hidden_when_there_is_nothing_active_to_sync(self):
+        report = _report(alerts=[_alert(1, "Retired", "brand", active=False)])
+        parsed = _form_nesting(_render(report, admin=True))
+        self.assertNotIn("/dashboard/acme/web-mentions/sync", parsed.actions)
+
+    def test_each_active_alert_offers_its_own_sync(self):
+        report = _report(alerts=[
+            _alert(1, "EOS Worldwide", "brand"),
+            _alert(2, "Retired", "industry", active=False),
+        ])
+        parsed = _form_nesting(_render(report, admin=True))
+        self.assertIn("/dashboard/acme/web-mentions/sync?alert=1", parsed.actions)
+        # An inactive alert is not polled at all, so it offers no Sync.
+        self.assertNotIn("/dashboard/acme/web-mentions/sync?alert=2", parsed.actions)
 
     def test_flash_messages_render(self):
         self.assertIn("Alert saved.", _render(_report(), admin=True, flash="Alert saved."))

@@ -63,6 +63,28 @@ def _int_or_none(raw: str | None) -> int | None:
     return value if value > 0 else None
 
 
+def _outcome_message(alert_name: str, outcome: dict) -> tuple[str, str]:
+    """Turn one poll's result into (saved_message, error_message).
+
+    Exactly one is non-empty. A feed that could not be read is still a *saved*
+    alert, so the message says both — losing the row because Google was briefly
+    unreachable would be the worse outcome.
+    """
+    name = f"Alert \u201c{alert_name}\u201d"
+    if not outcome.get("ok"):
+        reason = str(outcome.get("error") or "the feed could not be read")
+        return "", f"{name} saved, but {reason[0].lower()}{reason[1:]}"
+    new = int(outcome.get("new") or 0)
+    if new:
+        return f"{name} saved \u2014 {new} mention{'' if new == 1 else 's'} found.", ""
+    if outcome.get("seen"):
+        return f"{name} saved \u2014 feed checked, nothing new.", ""
+    return (
+        f"{name} saved \u2014 the feed is reachable but empty right now. "
+        "Results appear as Google finds them.", ""
+    )
+
+
 def _require_admin(request: Request, slug: str):
     """Auth for the alert-management actions. Returns (auth, email).
 
@@ -201,7 +223,12 @@ def web_mentions_add_alert(
                 "category": alert.category, "feed": alert.masked_feed_url},
         **audit_log.request_context(request),
     )
-    return _back(slug, saved=f"Alert “{alert.name}” saved. It will be polled on the next sync.")
+    # Check the feed now, while the admin is still looking at the form. The most
+    # useful moment to learn a URL is wrong is the moment you paste it — not
+    # tomorrow, after the scheduled run quietly recorded a 404.
+    outcome = service.ingest_alert(alert, timeout=service.inline_timeout())
+    saved_msg, error_msg = _outcome_message(alert.name, outcome)
+    return _back(slug, saved=saved_msg, error=error_msg)
 
 
 @router.post("/dashboard/{client_slug}/web-mentions/alerts/{alert_id}")
@@ -291,17 +318,41 @@ def _sync_bg(slug: str, alert_id: int | None) -> None:
 def web_mentions_sync(client_slug: str, request: Request, background_tasks: BackgroundTasks):
     slug = validate_client_slug(client_slug)
     _auth, email = _require_admin(request, slug)
+    alert_id = _int_or_none(request.query_params.get("alert"))
+
+    # One row's Sync button. Polled inline so the row's status updates on the
+    # redirect — one feed is quick, and the whole point is immediate feedback.
+    if alert_id:
+        alert = store.get_alert(alert_id, client_slug=slug)
+        if alert is None:
+            return _back(slug, error="That alert no longer exists.")
+        if not alert.active:
+            return _back(slug, error=f"Alert “{alert.name}” is inactive. Activate it to sync.")
+        audit_log.record(
+            action="web_mentions.sync_started",
+            actor_email=email,
+            detail={"client_slug": slug, "alerts": 1, "alert_id": alert.id},
+            **audit_log.request_context(request),
+        )
+        outcome = service.ingest_alert(alert, timeout=service.inline_timeout())
+        saved_msg, error_msg = _outcome_message(alert.name, outcome)
+        # _outcome_message is phrased for a save; this path only re-checked.
+        return _back(
+            slug,
+            saved=saved_msg.replace(" saved — ", " — ", 1),
+            error=error_msg.replace(" saved, but ", " — ", 1),
+        )
+
     alerts = store.list_alerts(slug, active_only=True)
     if not alerts:
         return _back(slug, error="No active alerts to sync.")
-    alert_id = _int_or_none(request.query_params.get("alert"))
     audit_log.record(
         action="web_mentions.sync_started",
         actor_email=email,
-        detail={"client_slug": slug, "alerts": len(alerts), "alert_id": alert_id},
+        detail={"client_slug": slug, "alerts": len(alerts), "alert_id": None},
         **audit_log.request_context(request),
     )
-    background_tasks.add_task(_sync_bg, slug, alert_id)
+    background_tasks.add_task(_sync_bg, slug, None)
     return _back(
         slug,
         saved=f"Syncing {len(alerts)} feed{'' if len(alerts) == 1 else 's'} — "
