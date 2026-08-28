@@ -12,8 +12,8 @@ loop). When ``DATABASE_URL`` is set, each finished audit is **persisted** so the
 report can be reopened from the Insights page and exported later; without a DB the
 route degrades to the old stateless behaviour (renders the report inline once).
 
-Pages are seeded from the client's Consent-scan config when present, so a client
-that's already set up for consent scanning needs no extra configuration to audit.
+The page list comes from the client's most recent stored run, so re-auditing a
+client needs no re-typing; a client with no runs yet starts from an empty list.
 """
 
 from __future__ import annotations
@@ -51,15 +51,14 @@ def _label_for(slug: str) -> str:
 
 
 def _seed_urls(slug: str) -> list[str]:
-    """Default page list — reuse the client's configured Consent-scan pages."""
+    """Default page list — the pages this client's last audit ran against."""
     try:
-        import consent_store
-        cfg = consent_store.get_config(slug)
-        if cfg and cfg.pages:
-            return list(cfg.pages)
+        if not a11y_store.enabled():
+            return []
+        last = a11y_store.latest_run(slug, include_result=False)
+        return list(last.urls) if last and last.urls else []
     except Exception:
-        pass
-    return []
+        return []
 
 
 def _parse_urls(raw: str) -> list[str]:

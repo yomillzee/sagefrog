@@ -107,10 +107,6 @@ SCHEMA_SQL_STATEMENTS = [
     ALTER TABLE client_dashboard_config
       ADD COLUMN IF NOT EXISTS overview_pinned_card TEXT
     """,
-    """
-    ALTER TABLE client_dashboard_config
-      ADD COLUMN IF NOT EXISTS consent_sidebar_enabled BOOLEAN NOT NULL DEFAULT FALSE
-    """,
     # Each client's headline KPI for the HQ view, stored as a small JSON spec
     # ({"type","label","goal"}). Client KPIs differ widely (MQLs, Google Ads
     # conversions, ROAS, …), so the type maps to a resolver rather than a fixed
@@ -228,8 +224,6 @@ DATE_RANGE_PRESETS: tuple[str, ...] = (
 # outside this set is ignored on save so a stray value can't wedge the sidebar.
 # Covers every section the sidebar can show — the always-present core tabs plus
 # the connector-gated standalone pages — so the Advanced tab can include/exclude
-# any of them. (Consent Health is deliberately absent: it has its own opt-in
-# "show on client sidebar" control, so it isn't driven by this opt-out list.)
 # The tuple order is canonical: _normalize_hidden_tabs emits keys in this order.
 SIDEBAR_TOGGLEABLE_TABS: tuple[str, ...] = (
     "overview",
@@ -279,10 +273,6 @@ class ClientConfigRow:
     # Headline KPI spec for the HQ view: {"type": <registry id>, "label": str,
     # "goal": float|None}. None when the client has no KPI configured.
     primary_kpi: dict[str, Any] | None = None
-    # Whether Consent & Tracking Health appears in the client-viewable sidebar.
-    # Off by default: most clients don't need it, and it only clutters their nav —
-    # admins turn it on per client from Settings.
-    consent_sidebar_enabled: bool = False
     # Admin override of the client's active ad days for budget pacing, as an ISO
     # weekday CSV (Mon=1..Sun=7). None = auto-detect from spend history.
     pacing_active_weekdays: str | None = None
@@ -381,7 +371,7 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
                    gsc_branded_roots, gsc_target_keywords, ga4_key_events,
                    explorer_filters, explorer_budget_tracker,
                    gsc_branded_exclude, gsc_target_exclude,
-                   overview_pinned_card, consent_sidebar_enabled, primary_kpi,
+                   overview_pinned_card, primary_kpi,
                    pacing_active_weekdays, segment_filter_profile,
                    sidebar_hidden_tabs, card_layouts,
                    default_date_preset, explorer_campaign_allowlist,
@@ -425,19 +415,18 @@ def get_config(client_slug: str) -> ClientConfigRow | None:
         gsc_branded_exclude=_s(row[21]),
         gsc_target_exclude=_s(row[22]),
         overview_pinned_card=_s(row[23]),
-        consent_sidebar_enabled=bool(row[24]) if row[24] is not None else False,
-        primary_kpi=_normalize_kpi_spec(row[25]),
-        pacing_active_weekdays=_s(row[26]),
-        segment_filter_profile=_s(row[27]),
-        sidebar_hidden_tabs=_normalize_hidden_tabs(row[28]),
-        card_layouts=_normalize_card_layouts(row[29]),
-        default_date_preset=_normalize_date_preset(row[30]),
-        explorer_campaign_allowlist=_normalize_campaign_allowlist(row[31]),
-        email_performance_selection=_normalize_id_list(row[32]),
-        analytics_page_path_filter=_s(row[33]),
-        metric_goals=metric_goals_service.normalize_goals(row[34]),
-        benchmarks_enabled=bool(row[35]) if row[35] is not None else False,
-        gsc_watch_keywords=_s(row[36]),
+        primary_kpi=_normalize_kpi_spec(row[24]),
+        pacing_active_weekdays=_s(row[25]),
+        segment_filter_profile=_s(row[26]),
+        sidebar_hidden_tabs=_normalize_hidden_tabs(row[27]),
+        card_layouts=_normalize_card_layouts(row[28]),
+        default_date_preset=_normalize_date_preset(row[29]),
+        explorer_campaign_allowlist=_normalize_campaign_allowlist(row[30]),
+        email_performance_selection=_normalize_id_list(row[31]),
+        analytics_page_path_filter=_s(row[32]),
+        metric_goals=metric_goals_service.normalize_goals(row[33]),
+        benchmarks_enabled=bool(row[34]) if row[34] is not None else False,
+        gsc_watch_keywords=_s(row[35]),
     )
 
 
@@ -1219,43 +1208,6 @@ def save_explorer_budget_tracker(
             ON CONFLICT (client_slug)
             DO UPDATE SET
               explorer_budget_tracker = EXCLUDED.explorer_budget_tracker,
-              updated_at = EXCLUDED.updated_at,
-              updated_by = EXCLUDED.updated_by
-            """,
-            (slug, label, bool(show), now, (updated_by or "").strip() or None),
-        )
-    saved = get_config(slug)
-    if not saved:
-        raise RuntimeError("Failed to load saved client config.")
-    return saved
-
-
-def save_consent_sidebar_enabled(
-    client_slug: str,
-    show: bool,
-    *,
-    updated_by: str | None = None,
-) -> ClientConfigRow:
-    """Toggle whether Consent & Tracking Health shows in the client sidebar."""
-    slug = (client_slug or "").strip().lower()
-    if not slug:
-        raise ValueError("client_slug is required.")
-    if not enabled():
-        raise RuntimeError("DATABASE_URL is required to save client dashboard config.")
-    ensure_schema()
-    now = datetime.now(tz=UTC)
-    existing = get_config(slug)
-    label = existing.label if existing else slug
-    with db.connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO client_dashboard_config (
-              client_slug, label, consent_sidebar_enabled, updated_at, updated_by
-            )
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (client_slug)
-            DO UPDATE SET
-              consent_sidebar_enabled = EXCLUDED.consent_sidebar_enabled,
               updated_at = EXCLUDED.updated_at,
               updated_by = EXCLUDED.updated_by
             """,

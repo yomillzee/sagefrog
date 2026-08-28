@@ -33,7 +33,7 @@ Exit status is 0 on a completed scan (even with violations found), 2 if the
 browser was unavailable, 1 on a usage error — so it slots into CI or a cron.
 
 Local dev: internal/loopback hosts are blocked by the shared SSRF guard; set
-CONSENT_ALLOW_PRIVATE_HOSTS=1 to scan a staging or localhost URL.
+SCANNER_ALLOW_PRIVATE_HOSTS=1 to scan a staging or localhost URL.
 """
 
 from __future__ import annotations

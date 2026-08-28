@@ -365,7 +365,7 @@ loadTags();
     """
 
     # Same shell as every other standalone client page (Lead Tracking, Email
-    # Performance, Consent Health…), so this page gets the ONE canonical sidebar
+    # Performance, Accessibility…), so this page gets the ONE canonical sidebar
     # instead of a hand-rolled nav of its own.
     return render_client_shell_page(
         client_slug=client_slug,

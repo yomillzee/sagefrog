@@ -179,7 +179,7 @@ See `railway/app/dashboard/ARCHITECTURE.md` for the full map.
 | `bigquery_settings_renderer.py` | Client settings page (accounts, mart routing, KPI, segment filters) |
 | `files_renderer.py` | File browser, time-tracking, insight document library |
 | `connectors_renderer.py` | Connector wizard (connect / test / sync / disconnect) |
-| `<feature>_renderer.py` | Per-feature views (gsc, gtm, semrush, consent, accessibility, lead tracking, …) |
+| `<feature>_renderer.py` | Per-feature views (gsc, gtm, semrush, accessibility, lead tracking, …) |
 
 State lives in **server-side rendering + a signed session cookie** (`eos_session`,
 14-day max age, signed via Starlette's `SessionMiddleware` / `itsdangerous`). Date

@@ -25,7 +25,6 @@ from dashboard.services import kpi_registry
 from dashboard.services import metric_goals as metric_goals_service
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import accessibility_page_url as _accessibility_page_url
-from dashboard.utils.urls import consent_page_url as _consent_page_url
 
 
 def _docs_enabled() -> bool:
@@ -49,7 +48,6 @@ def render_bigquery_settings_page(
     explorer_filters: str = "",
     monthly_budget: float | None = None,
     budget_tracker_enabled: bool = True,
-    consent_sidebar_enabled: bool = False,
     primary_kpi: dict | None = None,
     segment_filter_profile: str | None = None,
     metric_goals: dict | None = None,
@@ -94,7 +92,7 @@ def render_bigquery_settings_page(
     )
 
     # The Insights page is the "Insights" tab of the Admin surface, so admins get
-    # the same top tab strip the Connectors/Consent/tool pages carry.
+    # the same top tab strip the Connectors/tool pages carry.
     admin_tabs_html = (
         admin_top_tabs_html(
             client_slug=client_slug, active_tab="insights",
@@ -137,39 +135,8 @@ def render_bigquery_settings_page(
         can_edit=session_is_admin, header_extra_html=budget_vis_control
     )
 
-    # Consent & Tracking Health visibility (admin only). Off by default: most
-    # clients don't need the scanner in their nav, so it's hidden unless an admin
-    # turns it on here. The "Open Consent Health" link keeps the page reachable for
-    # admins to configure / run scans even while it's hidden from the sidebar.
-    consent_url = _consent_page_url(
-        client_slug=client_slug, access_key=access_key, use_session=use_session
-    ) or "#"
-    consent_visibility_url = _api_url(
-        f"/dashboard/{client_slug}/consent-visibility", access_key=access_key
-    )
-    consent_toggle_checked = " checked" if consent_sidebar_enabled else ""
-    consent_visibility_html = "" if not session_is_admin else f"""
-    <section class="summary-card">
-      <div class="sc-main">
-        <div class="sc-head">
-          <span class="sc-title">Consent health</span>
-          <span class="consent-pill" id="consentPill" data-state="loading">Checking…</span>
-        </div>
-        <span class="sc-sub" id="consentSub">Scans this client's site for tracking that fires before consent.</span>
-      </div>
-      <div class="sc-actions">
-        <label class="hdr-toggle" title="Show Consent Health in this client's sidebar">
-          <span class="hdr-toggle-label">In sidebar</span>
-          <span class="toggle-switch"><input type="checkbox" id="consentSidebarToggle"{consent_toggle_checked}><span class="toggle-track"></span></span>
-          <span class="status" id="consentSidebarStatus"></span>
-        </label>
-        <a class="sc-link" href="{_esc(consent_url)}">Open &rarr;</a>
-      </div>
-    </section>"""
-
     # Accessibility (ADA / WCAG) scoping audit — an on-demand axe-core scan of the
-    # client's site. Admin-only, and a plain link (the scan runs on its own page),
-    # mirroring the Consent card above.
+    # client's site. Admin-only, and a plain link (the scan runs on its own page).
     accessibility_url = _accessibility_page_url(
         client_slug=client_slug, access_key=access_key, use_session=use_session
     ) or "#"
@@ -178,7 +145,7 @@ def render_bigquery_settings_page(
       <div class="sc-main">
         <div class="sc-head">
           <span class="sc-title">Accessibility</span>
-          <span class="consent-pill" id="a11yPill" data-state="loading">Checking…</span>
+          <span class="status-pill" id="a11yPill" data-state="loading">Checking…</span>
         </div>
         <span class="sc-sub" id="a11ySub">Run an axe-core scan of this client's site to scope ADA remediation work.</span>
       </div>
@@ -494,7 +461,7 @@ def render_bigquery_settings_page(
     .hdr-toggle {{ display:inline-flex; align-items:center; gap:8px; margin:0; padding:0; text-transform:none; letter-spacing:0; cursor:pointer; }}
     .hdr-toggle-label {{ font-size:.78rem; font-weight:650; color:var(--muted); }}
     .hdr-toggle .status {{ font-size:.74rem; }}
-    /* Compact summary card (consent health) */
+    /* Compact summary card (accessibility) */
     .summary-card {{ display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; }}
     .sc-main {{ display:flex; flex-direction:column; gap:4px; min-width:0; }}
     .sc-head {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
@@ -503,14 +470,14 @@ def render_bigquery_settings_page(
     .sc-actions {{ display:flex; align-items:center; gap:18px; flex-shrink:0; flex-wrap:wrap; }}
     .sc-link {{ font-size:.84rem; font-weight:700; color:var(--accent); text-decoration:none; white-space:nowrap; }}
     .sc-link:hover {{ text-decoration:underline; }}
-    .consent-pill {{ display:inline-flex; align-items:center; gap:6px; font-size:.75rem; font-weight:700; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:#f7f9fc; color:var(--muted); }}
-    .consent-pill::before {{ content:''; width:7px; height:7px; border-radius:50%; background:#c5cdd9; flex-shrink:0; }}
-    .consent-pill[data-state="pass"] {{ color:var(--ok); border-color:#b8dfc8; background:#e9f7ef; }}
-    .consent-pill[data-state="pass"]::before {{ background:var(--ok); }}
-    .consent-pill[data-state="attention"] {{ color:#8a5a00; border-color:#f0d9a6; background:#fdf6e6; }}
-    .consent-pill[data-state="attention"]::before {{ background:#d99400; }}
-    .consent-pill[data-state="fail"] {{ color:var(--bad); border-color:#f3c0bb; background:#fdecea; }}
-    .consent-pill[data-state="fail"]::before {{ background:var(--bad); }}
+    .status-pill {{ display:inline-flex; align-items:center; gap:6px; font-size:.75rem; font-weight:700; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:#f7f9fc; color:var(--muted); }}
+    .status-pill::before {{ content:''; width:7px; height:7px; border-radius:50%; background:#c5cdd9; flex-shrink:0; }}
+    .status-pill[data-state="pass"] {{ color:var(--ok); border-color:#b8dfc8; background:#e9f7ef; }}
+    .status-pill[data-state="pass"]::before {{ background:var(--ok); }}
+    .status-pill[data-state="attention"] {{ color:#8a5a00; border-color:#f0d9a6; background:#fdf6e6; }}
+    .status-pill[data-state="attention"]::before {{ background:#d99400; }}
+    .status-pill[data-state="fail"] {{ color:var(--bad); border-color:#f3c0bb; background:#fdecea; }}
+    .status-pill[data-state="fail"]::before {{ background:var(--bad); }}
     @media (max-width:600px) {{
       main {{ padding:22px 14px 44px; }}
       h1 {{ font-size:1.3rem; }}
@@ -571,13 +538,12 @@ def render_bigquery_settings_page(
     {admin_tabs_html}
     <div class="page-head">
       <h1>{_esc(label)} — Insights</h1>
-      <p class="debug-only">Budget pacing and consent health.</p>
+      <p class="debug-only">Budget pacing and client insights.</p>
     </div>
     {flash_html}
 
     {findings_section_html}
     {timeline_section_html}
-    {consent_visibility_html}
     {accessibility_card_html}
     {kpi_section_html}
     {goals_section_html}
@@ -589,29 +555,7 @@ def render_bigquery_settings_page(
     </div>
   </div>
   <script>
-    const CONSENT_STATUS_API = "{_api_url(f'/dashboard/{client_slug}/consent/status', access_key=access_key)}";
     function setStatus(id, text, isErr) {{ const el = document.getElementById(id); if (!el) return; el.textContent = text; el.className = isErr ? 'status error' : 'status'; }}
-
-    // ---- Consent summary card: pull the latest scan health into the pill ----
-    (function(){{
-      const pill = document.getElementById('consentPill'); if (!pill) return;
-      const sub = document.getElementById('consentSub');
-      const LABELS = {{ pass:'Healthy', attention:'Needs attention', fail:'Critical issues', unknown:'Not yet scanned' }};
-      fetch(CONSENT_STATUS_API, {{ credentials:'same-origin' }})
-        .then(r => r.json())
-        .then(b => {{
-          const st = b && b.status;
-          if (!st || st === 'none') {{ pill.dataset.state = 'unknown'; pill.textContent = 'Not yet scanned'; if (sub) sub.textContent = 'No scan has run for this client yet.'; return; }}
-          if (st === 'running' || st === 'queued') {{ pill.dataset.state = 'loading'; pill.textContent = 'Scanning…'; return; }}
-          if (st === 'error') {{ pill.dataset.state = 'fail'; pill.textContent = 'Scan error'; if (sub && b.error_message) sub.textContent = b.error_message; return; }}
-          const h = b.health || 'unknown';
-          pill.dataset.state = h;
-          pill.textContent = LABELS[h] || h;
-          const vc = Number(b.violation_count || 0);
-          if (sub) sub.textContent = vc > 0 ? (vc + ' issue' + (vc === 1 ? '' : 's') + ' in the latest scan.') : 'No issues in the latest scan.';
-        }})
-        .catch(() => {{ pill.dataset.state = 'unknown'; pill.textContent = 'Status unavailable'; }});
-    }})();
 
     // ---- Accessibility summary card: pull the latest audit into the pill ----
     (function(){{
@@ -657,29 +601,6 @@ def render_bigquery_settings_page(
         }} catch (err) {{
           t.checked = !t.checked;  // revert on failure
           setStatus('budgetVisibilityStatus', 'Save failed: ' + (err.message || err), true);
-        }} finally {{ t.disabled = false; }}
-      }});
-    }})();
-    // ---- Consent health: show-on-client-sidebar toggle ----
-    (function(){{
-      const t = document.getElementById('consentSidebarToggle');
-      if (!t) return;
-      t.addEventListener('change', async () => {{
-        t.disabled = true;
-        setStatus('consentSidebarStatus', 'Saving…');
-        try {{
-          const r = await fetch("{consent_visibility_url}", {{
-            method:'POST', credentials:'same-origin',
-            headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
-            body: new URLSearchParams({{ show: t.checked ? '1' : '0' }}),
-          }});
-          const body = await r.json().catch(() => ({{}}));
-          if (!r.ok || !body.ok) throw new Error(body.error || ('HTTP ' + r.status));
-          t.closest('label').title = t.checked ? 'On' : 'Off';
-          setStatus('consentSidebarStatus', t.checked ? 'Shown in the client sidebar. Reload to see it.' : 'Hidden from the client sidebar.');
-        }} catch (err) {{
-          t.checked = !t.checked;  // revert on failure
-          setStatus('consentSidebarStatus', 'Save failed: ' + (err.message || err), true);
         }} finally {{ t.disabled = false; }}
       }});
     }})();

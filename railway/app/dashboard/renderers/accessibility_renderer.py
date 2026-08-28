@@ -1,7 +1,7 @@
 """In-dashboard UI for the Accessibility (ADA / WCAG) scoping audit.
 
 Server-renders an on-demand axe-core audit: an admin edits the page list (seeded
-from the client's Consent-scan pages, if configured), clicks **Run audit**, and
+from the client's last audit, if there is one), clicks **Run audit**, and
 the scan runs synchronously and re-renders with a scoping report — severity
 summary, highest-leverage rules, per-page breakdown, size band, and a coarse
 effort estimate. It reuses the shared client shell and scopes all styles under an
@@ -495,7 +495,7 @@ def render_accessibility_page(
     post_action = f"/dashboard/{_esc(client_slug)}/accessibility/scan"
     key_field = (f'<input type="hidden" name="key" value="{_esc(access_key)}">'
                  if access_key and not use_session else "")
-    seed_note = ("Seeded from this client's Consent-scan pages."
+    seed_note = ("Carried over from this client's last audit."
                  if (default_urls and submitted_urls is None) else
                  "Add one page per distinct template — home, a service page, a form, a blog post.")
 

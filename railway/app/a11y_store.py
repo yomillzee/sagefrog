@@ -1,14 +1,12 @@
 """Postgres persistence for the Accessibility (ADA / WCAG) audit feature.
 
 One table, ``a11y_scan_runs`` — one row per audit, storing the headline counts plus
-the full JSON result blob the report renders from. Unlike the consent scanner
-(which runs in the background and needs a two-step running→completed lifecycle),
-the accessibility scan is synchronous, so a run is written once, already finished,
-via :func:`save_run`.
+the full JSON result blob the report renders from. The accessibility scan is
+synchronous, so a run is written once, already finished, via :func:`save_run` —
+no two-step running→completed lifecycle to manage.
 
 JSON lives in JSONB columns (``urls``, ``summary``, ``result``), written with
-``json.dumps(...)::jsonb`` and read back as native objects — the same convention
-:mod:`consent_store` uses.
+``json.dumps(...)::jsonb`` and read back as native objects.
 
 Every function degrades gracefully when ``DATABASE_URL`` is unset (:func:`enabled`
 is False): reads return empty and :func:`save_run` returns 0 so the caller falls

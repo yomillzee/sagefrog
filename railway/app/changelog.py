@@ -63,6 +63,28 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-28",
+        title="Consent Health has been retired",
+        area="Client dashboards · Admin",
+        kind="improved",
+        summary=(
+            "The Consent & Tracking Health scanner and its page are gone, so "
+            "there is one less place to check and one less sidebar tab to explain "
+            "to a client."
+        ),
+        details=(
+            "The Consent Health tab no longer appears in any client sidebar, and "
+            "the “Consent health” card and its sidebar toggle are off the "
+            "Insights page.",
+            "The Admin tab strip is now Connectors · Insights · Advanced · View As.",
+            "Agency Trends drops its Consent column; the mobile client cards drop "
+            "the matching shield icon.",
+            "The Accessibility audit is unaffected — its page list now carries "
+            "over from that client's last audit instead of from the consent scan "
+            "setup.",
+        ),
+    ),
+    Entry(
+        date="2026-08-28",
         title="A new Web Mentions alert is checked the moment you add it",
         area="Web Mentions",
         kind="improved",

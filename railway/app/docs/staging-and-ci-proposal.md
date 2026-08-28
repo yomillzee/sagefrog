@@ -18,7 +18,7 @@ that are thin:
   pre-production environment — every migration's first real run is in prod.
 - **No CI.** There is no `.github/workflows`. The 70 test files in
   `railway/app/tests` only run when someone runs them locally, and the
-  integration tests that need a live `DATABASE_URL` (e.g. `test_consent_store`)
+  integration tests that need a live `DATABASE_URL`
   **skip** in every environment that lacks one — which is every environment right
   now. We've been hand-verifying deploys from logs.
 - **Manual verification.** Each migration deploy so far (#299, #301) was checked

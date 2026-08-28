@@ -1,4 +1,4 @@
-# Consent scanner + API service.
+# Browser scanner + API service.
 #
 # Based on Microsoft's official Playwright image, which ships Chromium AND all of
 # its OS libraries pre-installed under /ms-playwright (with PLAYWRIGHT_BROWSERS_PATH
@@ -13,7 +13,7 @@ FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
 # Chromium won't start its sandbox as root (how the container runs); the scanner
 # passes --no-sandbox when this is set. PLAYWRIGHT_BROWSERS_PATH is already set to
 # /ms-playwright by the base image, which the scanner auto-detects.
-ENV CONSENT_SCANNER_NO_SANDBOX=1 \
+ENV BROWSER_SCANNER_NO_SANDBOX=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1

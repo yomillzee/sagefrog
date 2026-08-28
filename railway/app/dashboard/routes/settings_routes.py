@@ -34,7 +34,6 @@ def _render_bq_nixon_settings(slug: str, db_cfg, *, flash, flash_err, html_kw) -
             explorer_filters=(getattr(db_cfg, "explorer_filters", None) or ""),
             monthly_budget=getattr(db_cfg, "monthly_budget_usd", None),
             budget_tracker_enabled=bool(getattr(db_cfg, "explorer_budget_tracker", True)),
-            consent_sidebar_enabled=bool(getattr(db_cfg, "consent_sidebar_enabled", False)),
             primary_kpi=getattr(db_cfg, "primary_kpi", None),
             segment_filter_profile=getattr(db_cfg, "segment_filter_profile", None),
             metric_goals=getattr(db_cfg, "metric_goals", None),
@@ -375,50 +374,6 @@ def dashboard_client_metric_goals_save(
 
 
 @router.post(
-    "/dashboard/{client_slug}/consent-visibility",
-    summary="Toggle whether Consent Health shows in the client sidebar (JSON)",
-    include_in_schema=False,
-)
-def dashboard_client_consent_visibility(
-    client_slug: str,
-    request: Request,
-    show: str = Form(""),
-):
-    """Admin-only toggle: does Consent & Tracking Health appear in this client's
-    sidebar? Off by default; admins still reach the page from Settings when off."""
-    slug = validate_client_slug(client_slug)
-    auth = web_auth.authenticate_dashboard_api(request, client_slug=slug)
-    user = auth.user
-    session_is_admin = bool(user and user.role == "admin")
-    session_email = user.email if user else None
-
-    if web_users.enabled() and not session_is_admin:
-        return JSONResponse(
-            {"ok": False, "error": "Only admins can change this setting."},
-            status_code=403,
-        )
-    if not client_dashboard_config.enabled():
-        return JSONResponse(
-            {"ok": False, "error": "DATABASE_URL is required to save this setting."},
-            status_code=503,
-        )
-    show_in_sidebar = str(show).strip().lower() in ("1", "true", "yes", "on")
-    try:
-        saved = client_dashboard_config.save_consent_sidebar_enabled(
-            slug, show_in_sidebar, updated_by=session_email or "dashboard_key",
-        )
-    except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=400)
-    audit_log.record(
-        action="dashboard.consent_visibility_saved",
-        actor_email=session_email,
-        detail={"client_slug": slug, "consent_sidebar_enabled": saved.consent_sidebar_enabled},
-        **audit_log.request_context(request),
-    )
-    return JSONResponse({"ok": True, "consent_sidebar_enabled": saved.consent_sidebar_enabled})
-
-
-@router.post(
     "/dashboard/{client_slug}/benchmarks-visibility",
     summary="Toggle the Overview peer-comparison line for a client (JSON)",
     include_in_schema=False,
@@ -619,9 +574,9 @@ def dashboard_client_sidebar_tabs(
 # ──────────────────────────────────────────────────────────────────────────────
 # Admin surface: tool tabs (Advanced / View As)
 # ──────────────────────────────────────────────────────────────────────────────
-# The per-client Admin page is a strip of tabs across the top. Connectors,
-# Insights, and Consent Health are their own existing pages; these two are
-# lightweight tool pages that share the same shell + tab strip.
+# The per-client Admin page is a strip of tabs across the top. Connectors and
+# Insights are their own existing pages; these two are lightweight tool pages
+# that share the same shell + tab strip.
 _ADMIN_TOOL_TABS = ("sidebar", "view-as")
 
 

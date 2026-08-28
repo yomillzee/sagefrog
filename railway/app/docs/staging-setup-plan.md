@@ -82,9 +82,9 @@ BigQuery queries, so the copy costs **no BQ**.
 - `audit_events`, `login_rate_buckets`, `connector_sync_runs`, `cron_locks` —
   audit/operational, not needed for dashboard accuracy.
 - `admin_dev_notes`, `client_notepads`, `client_insight_documents`,
-  `client_insight_folders`, `feature_requests`, `client_hours_share_links`,
-  `consent_scan_configs`, `consent_scan_runs` — internal notes / share tokens /
-  scan history; skipped for lightness and to avoid leaking internal commentary.
+  `client_insight_folders`, `feature_requests`, `client_hours_share_links` —
+  internal notes / share tokens; skipped for lightness and to avoid leaking
+  internal commentary.
 
 A `seed_staging.py` one-shot script (run as a Railway job or manually) does the copy
 into staging's `DATABASE_URL`, honoring the two lists above. Re-runnable for refreshes.
