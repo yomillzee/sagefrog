@@ -48,6 +48,7 @@ dashboard/
     files_routes.py        # Files browser and insight documents
     connector_routes.py    # Connector config CRUD
     consent_routes.py, accessibility_routes.py, notes_routes.py
+    web_mentions_routes.py # Web Mentions page, alert admin, RSS ingest cron
   renderers/               # HTML builders
     bigquery_dashboard_renderer.py  # ★ THE master dashboard template
     base_layout.py         # Favicon, sidebar/nav, shell pages, refresh toolbar
@@ -59,6 +60,7 @@ dashboard/
     pagespeed_renderer.py, consent_renderer.py, accessibility_renderer.py
     connectors_renderer.py, client_hours_renderer.py, linkedin_organic_renderer.py
     docs_renderer.py, files_renderer.py, notes_widget.py
+    web_mentions_renderer.py        # Google Alerts / web mention reporting
   services/                # Refresh, warehouse sync, metrics loading
     refresh_service.py             # refresh_client, refresh_client_quick
     bigquery_refresh_orchestrator.py
@@ -91,6 +93,7 @@ dashboard/
 | Refresh / sync behavior | `services/refresh_service.py`, `services/bigquery_refresh_orchestrator.py` |
 | Snapshot totals, breakdowns, budget pacing | `services/snapshot_metrics_service.py` |
 | New `/dashboard/*` or `/api/clients/*` routes | `routes/` (appropriate module) |
+| Web Mentions (Google Alerts) | `web_mentions_store.py` / `web_mentions_service.py`, `renderers/web_mentions_renderer.py` |
 | Segment classification (business lines / regions) | `penn_business_lines.py` |
 | Formatting, URLs, auth keys | `utils/` |
 

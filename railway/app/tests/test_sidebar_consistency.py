@@ -174,7 +174,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         # strip so the agency options read as tabs of one page.
         pages = self._render_all()
         expected = [
-            "Connectors", "Insights", "Consent Health",
+            "Connectors", "Insights", "Consent Health", "Web Mentions",
             "Advanced", "View As",
         ]
         for name in ("connectors", "settings"):

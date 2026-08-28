@@ -86,3 +86,27 @@ $env:CRON_SECRET = "your-secret"
 $env:CRON_JOB = "consent-scan-due"
 python run_sync_bq.py
 ```
+
+## Web Mentions ingest (`CRON_JOB=web-mentions`)
+
+The same worker can drive the Google Alerts RSS ingest that feeds each client's
+**Web Mentions** page. Create another Railway cron service with this root
+directory and set:
+
+- `CRON_JOB=web-mentions` — targets `/internal/web-mentions/ingest-due`.
+- `CRON_SECRET` — same value as the main API service.
+- A daily schedule (Google Alerts feeds only carry the most recent results, so
+  daily is the useful floor; more often mostly re-reads the same entries).
+
+The endpoint polls every client that has at least one **active** alert, is
+hands-off like `sync-bq-all` (it queues the work and returns immediately), and
+is guarded by a Postgres lock so runs never stack. One client's broken feed is
+recorded on that alert and never stops another client's ingest — check a
+client's Web Mentions page (admins see per-alert "last successful sync" and the
+error) rather than this log.
+
+```powershell
+$env:CRON_SECRET = "your-secret"
+$env:CRON_JOB = "web-mentions"
+python run_sync_bq.py
+```

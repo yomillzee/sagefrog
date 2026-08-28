@@ -19,6 +19,7 @@ from dashboard.utils.urls import (
     lead_tracking_page_url as _lead_tracking_page_url,
     linkedin_organic_page_url as _linkedin_organic_page_url,
     settings_page_url as _settings_page_url,
+    web_mentions_page_url as _web_mentions_page_url,
 )
 
 def favicon_head_html() -> str:
@@ -735,6 +736,7 @@ _VIEW_ICONS: dict[str, str] = {
     "bluesky": '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5.202 2.857C7.954 4.922 10.913 9.11 12 11.358c1.087-2.247 4.046-6.436 6.798-8.501C20.783 1.366 24 .213 24 3.883c0 .732-.42 6.156-.667 7.037-.856 3.061-3.978 3.842-6.755 3.37 4.854.826 6.089 3.562 3.422 6.299-5.065 5.196-7.28-1.304-7.847-2.97-.104-.305-.152-.448-.153-.327 0-.121-.05.022-.153.327-.568 1.666-2.782 8.166-7.847 2.97-2.667-2.737-1.432-5.473 3.422-6.3-2.777.473-5.899-.308-6.755-3.369C.42 10.04 0 4.615 0 3.883c0-3.67 3.217-2.517 5.202-1.026"/></svg>',
     "event-tracking": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',
     "site-performance": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20a8 8 0 10-8-8"/><path d="M4 12a8 8 0 018-8"/><line x1="12" y1="12" x2="16" y2="9"/><circle cx="12" cy="12" r="1.6"/></svg>',
+    "web-mentions": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 9 9 0 01-3.8-.8L3 21l1.9-4.9A8.4 8.4 0 013 11.5 8.5 8.5 0 0112 3a8.5 8.5 0 019 8.5z"/><path d="M8.5 11.5h7"/><path d="M8.5 8.5h4"/></svg>',
     "consent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
 }
 
@@ -897,6 +899,14 @@ def dashboard_sidebar_view_nav_html(
             f'<a class="dash-view-btn" data-tab="bluesky" href="{_esc(bs)}"{_tab_hide("bluesky")}>'
             f'{_VIEW_ICONS["bluesky"]}<span>Bluesky</span></a>'
         )
+    if pflags.get("show_web_mentions"):
+        wm = _web_mentions_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or "#"
+        items.append(
+            f'<a class="dash-view-btn" data-tab="web_mentions" href="{_esc(wm)}"{_tab_hide("web_mentions")}>'
+            f'{_VIEW_ICONS["web-mentions"]}<span>Web Mentions</span></a>'
+        )
     if pflags.get("show_gtm"):
         et = _gtm_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
@@ -973,6 +983,7 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
             "show_pagespeed": False,
             "show_semrush": False,
             "show_consent": False,
+            "show_web_mentions": False,
         }
     status_by_type = {c.connector_type: c.status for c in configs}
 
@@ -1013,6 +1024,11 @@ def platform_nav_flags(client_slug: str) -> dict[str, bool]:
         # admin turns it on from Settings ("Show on client sidebar"). Admins reach
         # the page (to configure / run scans) via the Settings link regardless.
         "show_consent": _consent_sidebar_enabled(client_slug),
+        # Web Mentions follows the "show only what has data" rule: the tab appears
+        # once an admin has added a Google Alert for the account. Admins reach the
+        # page before that through the Admin tab strip, which is where they add the
+        # first alert.
+        "show_web_mentions": _has_web_mention_alerts(client_slug),
     }
 
 
@@ -1050,6 +1066,17 @@ def _sidebar_hidden_tabs(client_slug: str) -> tuple[str, ...]:
         return cfg.sidebar_hidden_tabs if cfg else ()
     except Exception:
         return ()
+
+
+def _has_web_mention_alerts(client_slug: str) -> bool:
+    """Whether this account monitors any Google Alert. False on any error so a
+    Postgres hiccup never blanks the nav."""
+    try:
+        import web_mentions_store
+
+        return web_mentions_store.has_alerts(client_slug)
+    except Exception:
+        return False
 
 
 def _has_consent_config(client_slug: str) -> bool:
@@ -1153,6 +1180,7 @@ _SIDEBAR_TAB_EDIT_ITEMS: tuple[tuple[str, str], ...] = (
     ("linkedin_organic", "LinkedIn Organic"),
     ("bluesky", "Bluesky"),
     ("event_tracking", "Event Tracking"),
+    ("web_mentions", "Web Mentions"),
 )
 
 
@@ -1191,6 +1219,7 @@ _ADMIN_TAB_ITEMS: tuple[tuple[str, str], ...] = (
     ("connectors", "Connectors"),
     ("insights", "Insights"),
     ("consent", "Consent Health"),
+    ("web-mentions", "Web Mentions"),
     ("sidebar", "Advanced"),
     ("view-as", "View As"),
 )
@@ -1224,6 +1253,10 @@ def admin_tab_url(
         return _consent_page_url(
             client_slug=client_slug, access_key=access_key, use_session=use_session
         ) or f"/dashboard/{client_slug}/consent"
+    if tab == "web-mentions":
+        return _web_mentions_page_url(
+            client_slug=client_slug, access_key=access_key, use_session=use_session
+        ) or f"/dashboard/{client_slug}/web-mentions"
     base = f"/dashboard/{client_slug}/admin/{tab}"
     if not use_session and access_key:
         from urllib.parse import quote
