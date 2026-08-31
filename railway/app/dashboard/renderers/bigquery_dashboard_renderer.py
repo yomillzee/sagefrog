@@ -1634,6 +1634,8 @@ def render_bigquery_dashboard_page(
   {favicon_head_html()}
   <!-- Charts: Chart.js, vendored locally (served from /static/vendor) -->
   <script src="/static/vendor/chart.umd.min.js"></script>
+  <!-- World country outline paths for the Demographics "Users by country" map -->
+  <script src="/static/vendor/world-country-outlines.js"></script>
   <style>
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --blue:#1769aa; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
@@ -2545,13 +2547,22 @@ def render_bigquery_dashboard_page(
     .gender-stat-label {{ font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; font-weight:800; color:var(--muted); }}
     .gender-stat-value {{ font-size:1.1rem; font-weight:800; color:var(--navy); line-height:1.1; }}
     .gender-stat-pct {{ font-size:.74rem; color:var(--muted); }}
-    .state-map {{ width:100%; }}
-    .state-map svg {{ width:100%; height:auto; display:block; }}
+    .geo-map {{ width:100%; }}
+    .geo-map svg {{ width:100%; height:auto; display:block; }}
     .state-tile {{ transition:filter .12s; }}
     .state-tile:hover {{ filter:brightness(.92); }}
     .state-tile-label {{ font-size:8px; font-weight:700; fill:#5a6b82; pointer-events:none; }}
-    .state-map-scale {{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:.72rem; color:var(--muted); }}
-    .state-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
+    /* Country choropleth (Users-by-country map): real border paths, so hover
+       needs a stroke to read against neighbours instead of a tile gap. */
+    .country {{ stroke:#fff; stroke-width:.6; transition:filter .12s, stroke-width .12s; }}
+    .country:hover {{ filter:brightness(.9); stroke-width:1.1; }}
+    /* Dot markers for city-states with no fillable shape at this scale (e.g.
+       Singapore, Hong Kong) -- see COUNTRY_MARKERS. */
+    .territory-dot {{ fill:#0a2540; fill-opacity:.82; stroke:#fff; stroke-width:1.4; transition:fill-opacity .12s; }}
+    .territory-dot:hover {{ fill-opacity:1; }}
+    .geo-map-scale {{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:.72rem; color:var(--muted); }}
+    .geo-map-scale-bar {{ flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }}
+    .geo-map-note {{ margin-top:8px; font-size:.72rem; color:var(--muted); line-height:1.5; }}
     /* Sticky date bar clears the fixed 52px mobile top bar (see SIDEBAR_CSS). */
     @media (max-width:900px) {{ .cards {{ grid-template-columns:repeat(2,minmax(120px,1fr)); }} .two-col,.three-col {{ grid-template-columns:1fr; }} .date-bar {{ top:52px; }} }}
     /* On phones give the metric columns more room: tighten the path label cap. */
@@ -2763,11 +2774,23 @@ def render_bigquery_dashboard_page(
         <p class="chart-note" id="demoScopeNote" style="margin-top:0" hidden></p>
         <div class="two-col" style="align-items:start">
           <div class="col-panel">
-            <h3 id="stateMapTitle">Users by state</h3>
-            <div id="stateMap" class="state-map"></div>
+            <div class="col-panel-head">
+              <h3 id="stateMapTitle">Users by state</h3>
+              <div class="chips seg" id="geoMapViewChips">
+                <button type="button" class="chip active" data-view="state">State</button>
+                <button type="button" class="chip" data-view="country">Country</button>
+              </div>
+            </div>
+            <div id="stateMap" class="geo-map"></div>
           </div>
           <div class="col-panel">
-            <h3>Top cities</h3>
+            <div class="col-panel-head">
+              <h3 id="citiesTableTitle">Top cities</h3>
+              <div class="chips seg" id="geoTableViewChips">
+                <button type="button" class="chip active" data-view="cities">Cities</button>
+                <button type="button" class="chip" data-view="countries">Countries</button>
+              </div>
+            </div>
             <div class="table-wrap"><table id="citiesTable" class="compact"></table></div>
           </div>
         </div>
@@ -7228,8 +7251,118 @@ def render_bigquery_dashboard_page(
       }}
       const hasData=Object.keys(byState).length>0;
       host.innerHTML=`<svg viewBox="0 0 ${{W}} ${{H}}" role="img" aria-label="Users by US state">${{tiles}}</svg>`+
-        (hasData?`<div class="state-map-scale"><span>Fewer</span><span class="state-map-scale-bar"></span><span>More</span></div>`:`<div class="empty" style="padding:12px">No state-level data for this range.</div>`);
+        (hasData?`<div class="geo-map-scale"><span>Fewer</span><span class="geo-map-scale-bar"></span><span>More</span></div>`:`<div class="empty" style="padding:12px">No state-level data for this range.</div>`);
     }}
+    // Users-by-country choropleth: real border paths (vendored from
+    // /static/vendor/world-country-outlines.js), shaded the same way as the
+    // state tile grid. GA4's country names mostly match the map's own names;
+    // COUNTRY_NAME_ALIASES covers the handful that don't. A few city-states
+    // and micro-territories (Singapore, Hong Kong, …) have no fillable shape
+    // in the underlying map data at this scale — those with real volume get
+    // a dot marker anchored to their neighbouring landmass's own path
+    // coordinates instead (a lat/lon projection doesn't line up with this
+    // map's pixel space); the rest simply don't appear, same as a non-US
+    // region on the state map — they're still in the countries table.
+    const COUNTRY_NAME_ALIASES={{
+      'South Korea':'Korea', 'Türkiye':'Turkey', 'Czechia':'Czech Rep.',
+      'Dominican Republic':'Dominican Rep.', 'Myanmar (Burma)':'Myanmar',
+      'Bosnia & Herzegovina':'Bosnia and Herz.', 'Congo - Brazzaville':'Congo',
+      'North Macedonia':'Macedonia', 'Trinidad & Tobago':'Trinidad and Tobago',
+      'Laos':'Lao PDR',
+    }};
+    const COUNTRY_MARKERS={{ 'Singapore':[681.0,284.5], 'Hong Kong':[706.0,231.5] }};
+    let worldMapNameToCode=null;
+    function countryCode(name) {{
+      if (!worldMapNameToCode) {{
+        worldMapNameToCode={{}};
+        const wm=window.SF_WORLD_MAP;
+        if (wm&&wm.paths) for (const code in wm.paths) worldMapNameToCode[wm.paths[code].name]=code;
+      }}
+      return worldMapNameToCode[COUNTRY_NAME_ALIASES[name]||name];
+    }}
+    function renderCountryMap(countryRows) {{
+      const host=document.getElementById('stateMap');
+      if (!host) return;
+      const wm=window.SF_WORLD_MAP;
+      if (!wm||!wm.paths) {{ host.innerHTML='<div class="empty" style="padding:12px">Map data unavailable.</div>'; return; }}
+      const byCode={{}};
+      for (const r of (countryRows||[])) {{
+        const code=countryCode(r.country);
+        if (!code) continue;
+        const s=byCode[code]||(byCode[code]={{users:0,sessions:0,new_users:0,has_detail:false}});
+        s.users+=num(r.users);
+        if (r.sessions!=null||r.new_users!=null) {{
+          s.sessions+=num(r.sessions); s.new_users+=num(r.new_users); s.has_detail=true;
+        }}
+      }}
+      const max=Math.max(1,...Object.values(byCode).map(s=>s.users),...(countryRows||[]).filter(r=>COUNTRY_MARKERS[r.country]).map(r=>num(r.users)));
+      let paths='';
+      for (const code in wm.paths) {{
+        const meta=wm.paths[code], s=byCode[code], v=s?s.users:0;
+        const fill=v>0?lerpColor(v/max):'#eef2f7';
+        const detail=(s&&s.has_detail&&v>0)?` · ${{count(s.sessions)}} sessions · ${{count(s.new_users)}} new`:'';
+        const tip=v>0?`${{meta.name}} — ${{count(v)}} users${{detail}}`:`${{meta.name}} — no recorded users`;
+        paths+=`<path class="country" d="${{meta.path}}" fill="${{fill}}"><title>${{esc(tip)}}</title></path>`;
+      }}
+      let markers='', markerNames=[];
+      for (const r of (countryRows||[])) {{
+        const pos=COUNTRY_MARKERS[r.country], v=num(r.users);
+        if (pos&&v>=50) {{
+          const radius=4+6*Math.sqrt(v/max);
+          markers+=`<circle class="territory-dot" cx="${{pos[0]}}" cy="${{pos[1]}}" r="${{radius.toFixed(1)}}"><title>${{esc(r.country)}} — ${{count(v)}} users (city-state, not shaded — too small to render as a filled shape at this scale)</title></circle>`;
+          markerNames.push(r.country);
+        }}
+      }}
+      const hasData=Object.keys(byCode).length>0||markerNames.length>0;
+      host.innerHTML=`<svg viewBox="0 0 ${{wm.width}} ${{wm.height}}" role="img" aria-label="Users by country">${{paths}}${{markers}}</svg>`+
+        (hasData?`<div class="geo-map-scale"><span>Fewer</span><span class="geo-map-scale-bar"></span><span>More</span></div>`:`<div class="empty" style="padding:12px">No country-level data for this range.</div>`)+
+        (markerNames.length?`<div class="geo-map-note">${{esc(markerNames.join(' & '))}} shown as a marker, not shaded — too small to render as a filled shape at this scale.</div>`:'');
+    }}
+    let geoView='state', tableView='cities', demoGeoPayload=null;
+    function renderGeoMap() {{
+      if (!demoGeoPayload) return;
+      document.getElementById('stateMapTitle').textContent=geoView==='country'?'Users by country':'Users by state';
+      if (geoView==='country') renderCountryMap(demoGeoPayload.by_country);
+      else renderStateMap(demoGeoPayload.regionRows);
+    }}
+    const CITIES_COLUMNS=[
+      {{key:'city',label:'City',left:true}},
+      {{key:'region',label:'Region',left:true}},
+      {{key:'users',label:'Users',format:count}},
+      {{key:'new_users',label:'New',format:v=>v!=null?count(v):'—'}},
+      {{key:'sessions',label:'Sessions',format:count}},
+      {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
+      {{key:'key_events',label:'Key events',format:count}},
+    ];
+    const COUNTRIES_COLUMNS=[
+      {{key:'country',label:'Country',left:true}},
+      {{key:'users',label:'Users',format:count}},
+      {{key:'new_users',label:'New',format:v=>v!=null?count(v):'—'}},
+      {{key:'sessions',label:'Sessions',format:count}},
+      {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
+      {{key:'key_events',label:'Key events',format:count}},
+    ];
+    function renderGeoTable() {{
+      if (!demoGeoPayload) return;
+      document.getElementById('citiesTableTitle').textContent=tableView==='countries'?'Top countries':'Top cities';
+      if (tableView==='countries') renderTable('citiesTable',COUNTRIES_COLUMNS,demoGeoPayload.by_country,'No country data.');
+      else renderTable('citiesTable',CITIES_COLUMNS,demoGeoPayload.by_city,'No city data.');
+    }}
+    function bindGeoToggles() {{
+      const mapHost=document.getElementById('geoMapViewChips');
+      if (mapHost) mapHost.querySelectorAll('.chip').forEach(btn=>btn.addEventListener('click',()=>{{
+        geoView=btn.dataset.view;
+        mapHost.querySelectorAll('.chip').forEach(b=>b.classList.toggle('active',b===btn));
+        renderGeoMap();
+      }}));
+      const tableHost=document.getElementById('geoTableViewChips');
+      if (tableHost) tableHost.querySelectorAll('.chip').forEach(btn=>btn.addEventListener('click',()=>{{
+        tableView=btn.dataset.view;
+        tableHost.querySelectorAll('.chip').forEach(b=>b.classList.toggle('active',b===btn));
+        renderGeoTable();
+      }}));
+    }}
+    bindGeoToggles();
     async function loadDemographics() {{
       setStatus('demoStatus','Loading…');
       document.getElementById('stateMap').innerHTML = `<div class="skel" style="height:200px;border-radius:8px"></div>`;
@@ -7244,6 +7377,7 @@ def render_bigquery_dashboard_page(
         // whole-site geography as if it were scoped to the filtered pages.
         if (payload.scoped && payload.geo_scope_available === false) {{
           const msg='Page-scoped geography isn’t available yet. It appears after the next GA4 sync writes the per-page geography report.';
+          demoGeoPayload=null; // a stale toggle click must not redraw last load's map/table over this message
           document.getElementById('stateMap').innerHTML=`<div class="empty" style="padding:12px">${{esc(msg)}}</div>`;
           renderTable('citiesTable',[{{key:'city',label:'City',left:true}}],[],msg);
           setStatus('demoStatus','');
@@ -7256,18 +7390,11 @@ def render_bigquery_dashboard_page(
           for (const r of (payload.by_city||[])) if (r.region) agg[r.region]=(agg[r.region]||0)+num(r.users);
           regionRows=Object.entries(agg).map(([region,users])=>({{region,users}}));
         }}
-        renderStateMap(regionRows);
         // Eng. rate is served derived (engaged ÷ sessions); it reads '—' only for
         // dates synced before the geo report carried engaged_sessions.
-        renderTable('citiesTable',[
-          {{key:'city',label:'City',left:true}},
-          {{key:'region',label:'Region',left:true}},
-          {{key:'users',label:'Users',format:count}},
-          {{key:'new_users',label:'New',format:v=>v!=null?count(v):'—'}},
-          {{key:'sessions',label:'Sessions',format:count}},
-          {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
-          {{key:'key_events',label:'Key events',format:count}},
-        ], payload.by_city||[], 'No city data.');
+        demoGeoPayload={{ regionRows, by_country:payload.by_country||[], by_city:payload.by_city||[] }};
+        renderGeoMap();
+        renderGeoTable();
         demoAgeRows=payload.by_age||[];
         renderAge();
         renderGender(payload.by_gender||[]);
