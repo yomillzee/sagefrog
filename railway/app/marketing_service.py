@@ -2749,27 +2749,44 @@ def fetch_demographics(
     LIMIT 70
     """
 
-    def _read_geo(enriched: bool) -> tuple[list, list]:
+    # Country-level rollup for the global variant of the demographics map.
+    # Same shape as the region rollup above, just grouped one level up — a
+    # client with a global audience can still read country-level share even
+    # where GA4's region dimension is too sparse or too US-centric to plot.
+    def _country_sql(enriched: bool) -> str:
+        return f"""
+    SELECT
+      country,{_geo_metrics(enriched)}
+    FROM {geo_source}
+    WHERE date BETWEEN @start_date AND @end_date
+      AND country IS NOT NULL AND country != '' AND country != '(not set)'{geo_scope}
+    GROUP BY country
+    ORDER BY users DESC
+    LIMIT 200
+    """
+
+    def _read_geo(enriched: bool) -> tuple[list, list, list]:
         return (
             _run_query(_city_sql(enriched), params=params, max_rows=20),
             _run_query(_region_sql(enriched), params=params, max_rows=70),
+            _run_query(_country_sql(enriched), params=params, max_rows=200),
         )
 
     geo_available = True
     try:
-        by_city, by_region = _read_geo(True)
+        by_city, by_region, by_country = _read_geo(True)
     except Exception as exc:
         if _is_missing_column(exc):
             # Mart view predates the engagement/new-user columns — read what it
             # has. Rebuilt on this client's next GA4 sync.
             _log.info("geo view missing engagement columns [%s]", _client_key())
-            by_city, by_region = _read_geo(False)
+            by_city, by_region, by_country = _read_geo(False)
         elif scoped and _is_missing_table(exc):
             # Only the scoped read can hit a view that doesn't exist yet (it lands
             # on the first GA4 sync after the geo_page report shipped). Degrade to
             # "no scoped geography"; anything else is a real failure.
             _log.info("scoped geo unavailable [%s]: %s", _client_key(), str(exc)[:200])
-            by_city, by_region, geo_available = [], [], False
+            by_city, by_region, by_country, geo_available = [], [], [], False
         else:
             raise
     # Age/gender are user-scoped: GA4 has no page dimension to pair them with, so
@@ -2783,6 +2800,7 @@ def fetch_demographics(
         "by_age": by_age,
         "by_gender": by_gender,
         "by_region": by_region,
+        "by_country": by_country,
         "page_path_filter": patterns,
         "scoped": scoped,
         "geo_scope_available": geo_available,

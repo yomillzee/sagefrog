@@ -63,6 +63,25 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-08-31",
+        title="Demographics map can switch to a world view",
+        area="Client dashboards · Website Analytics",
+        kind="new",
+        summary=(
+            "“Users by state” and “Top cities” each get a small toggle "
+            "next to the title — State/Country on the map, Cities/Countries on the "
+            "table — so a client with meaningful traffic from outside the US can "
+            "switch either one to a global view."
+        ),
+        details=(
+            "The two toggles are independent — you can view the country map "
+            "next to the cities table, or the reverse.",
+            "A handful of city-states (Singapore, Hong Kong) are too small to "
+            "shade as a country shape at this scale; they show as a marker on "
+            "the map and still rank correctly in the countries table.",
+        ),
+    ),
+    Entry(
+        date="2026-08-31",
         title="Sessions & engagement cards drop the “?” next to each metric",
         area="Client dashboards · Website Analytics",
         kind="improved",

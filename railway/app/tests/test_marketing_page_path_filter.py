@@ -218,9 +218,10 @@ class DemographicsScopeTests(unittest.TestCase):
         sql = self._sql()
         self.assertIn("vw_ga4_geo_page_daily", sql)
         self.assertNotIn("vw_ga4_geo_daily`", sql)
-        # Both geography queries (cities + the state rollup) carry the scope.
+        # All three geography queries (cities + the state and country rollups)
+        # carry the scope.
         geo_queries = [s for s, _ in self._captured if "vw_ga4_geo_page_daily" in s]
-        self.assertEqual(len(geo_queries), 2)
+        self.assertEqual(len(geo_queries), 3)
         self.assertTrue(
             all("CONTAINS_SUBSTR(page_path, @pp0)" in s for s in geo_queries)
         )
@@ -258,6 +259,7 @@ class DemographicsScopeTests(unittest.TestCase):
         self.assertFalse(out["geo_scope_available"])
         self.assertEqual(out["by_city"], [])
         self.assertEqual(out["by_region"], [])
+        self.assertEqual(out["by_country"], [])
         self.assertNotIn("vw_ga4_geo_daily`", self._sql())
 
     def test_geo_queries_carry_the_engagement_and_new_user_columns(self) -> None:
@@ -271,7 +273,7 @@ class DemographicsScopeTests(unittest.TestCase):
                     s for s, _ in self._captured
                     if "vw_ga4_geo_daily" in s or "vw_ga4_geo_page_daily" in s
                 ]
-                self.assertEqual(len(geo_sql), 2)  # cities + region rollup
+                self.assertEqual(len(geo_sql), 3)  # cities + region + country rollup
                 for sql in geo_sql:
                     self.assertIn("SUM(new_users) AS new_users", sql)
                     self.assertIn("SUM(engaged_sessions) AS engaged_sessions", sql)
@@ -298,7 +300,7 @@ class DemographicsScopeTests(unittest.TestCase):
         ms._run_query = _stale
         out = ms.fetch_demographics(start_date=START, end_date=END)
         retried = [s for s in calls if "vw_ga4_geo_daily" in s and "engaged_sessions" not in s]
-        self.assertEqual(len(retried), 2)  # cities + region rollup, plain columns
+        self.assertEqual(len(retried), 3)  # cities + region + country rollup, plain columns
         self.assertTrue(all("SUM(active_users) AS users" in s for s in retried))
         # Still a well-formed payload — the panel just shows no eng. rate.
         self.assertTrue(out["geo_scope_available"])
