@@ -1983,11 +1983,8 @@ def render_bigquery_dashboard_page(
     .metric-card.active {{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:#f3f8ff; }}
     /* The whole card is the tooltip trigger (.ps-tip, from the Site Performance
        pane's CSS, which this page already carries): hovering or tabbing to a card
-       explains its metric, so the ? stays decoration rather than becoming a
-       second button nested inside the card's own button. */
+       explains its metric. */
     .metric-card .card-title {{ display:flex; align-items:center; gap:5px; }}
-    .metric-card .ps-info {{ cursor:inherit; }}
-    .metric-card:hover .ps-info, .metric-card:focus-visible .ps-info {{ color:var(--accent); border-color:#b9c8dc; }}
     /* Campaign explorer's "metrics over time" chart -- the panel between the
        summary cards and the tree table. Its title names whichever metrics the
        cards above have selected. */
@@ -7413,7 +7410,7 @@ def render_bigquery_dashboard_page(
         const edge = i === 0 ? ' ps-tip--start' : (i === AVG_DUR_METRICS.length - 1 ? ' ps-tip--end' : '');
         return `<button type="button" class="card metric-card ps-tip ps-tip--wide${{edge}}${{on?' active':''}}" `
           + `data-metric="${{esc(m.key)}}" data-tip="${{tip}}" aria-pressed="${{on?'true':'false'}}">`
-          + `<div class="card-title">${{esc(m.label)}}<span class="ps-info" aria-hidden="true">?</span></div>`
+          + `<div class="card-title">${{esc(m.label)}}</div>`
           + `<div class="card-value">${{m.fmt(v)}}</div>${{deltaHtml(v,pv)}}`
           + `<span class="sr-only">${{tip}}</span></button>`;
       }}).join('');

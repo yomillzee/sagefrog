@@ -197,9 +197,6 @@ class RendererCardTests(unittest.TestCase):
         self.assertIn('data-tip="${tip}"', html)
         self.assertIn("ps-tip ps-tip--wide", html)
         self.assertNotIn('id="avgDurNote"', html)
-        # The ? is decoration: a real button there would nest inside the card's
-        # own button, which is invalid and unreachable by keyboard.
-        self.assertIn('<span class="ps-info" aria-hidden="true">?</span>', html)
         # One plain sentence per card, and only one -- no scoped variant, no
         # session-weighting paragraph. The filter bar names the scope.
         self.assertIn("How many visits the site got.", html)

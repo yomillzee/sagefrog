@@ -62,6 +62,17 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-08-31",
+        title="Sessions & engagement cards drop the “?” next to each metric",
+        area="Client dashboards · Website Analytics",
+        kind="improved",
+        summary=(
+            "The question mark next to each of the four card titles is gone — "
+            "hovering (or tabbing to) the card itself already shows the same "
+            "explanation, so the icon was just repeating it."
+        ),
+    ),
+    Entry(
         date="2026-08-28",
         title="Sessions & engagement has a Daily/Weekly toggle again",
         area="Client dashboards · Website Analytics",
