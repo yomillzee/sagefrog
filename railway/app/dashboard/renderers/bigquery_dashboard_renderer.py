@@ -2792,6 +2792,7 @@ def render_bigquery_dashboard_page(
               </div>
             </div>
             <div class="table-wrap"><table id="citiesTable" class="compact"></table></div>
+            <div class="geo-map-note" id="citiesTableNote" hidden></div>
           </div>
         </div>
         <div class="two-col" id="demoUserPanels" style="align-items:start; margin-top:14px">
@@ -7334,8 +7335,15 @@ def render_bigquery_dashboard_page(
       {{key:'engagement_rate',label:'Eng. rate',format:v=>v!=null?v+'%':'—'}},
       {{key:'key_events',label:'Key events',format:count}},
     ];
+    // The base map only has real border shapes for 176 of GA4's ~249 possible
+    // country values (it drops micro-states and tiny territories, same as any
+    // map at this pixel width would) -- COUNTRY_MARKERS only covers the ones
+    // we've seen carry real traffic so far. Rather than guess at the rest, flag
+    // any country in the table that won't be shaded, so the gap is visible for
+    // every client instead of just the ones we happened to notice.
+    function countryHasVisual(name) {{ return !!(countryCode(name)||COUNTRY_MARKERS[name]); }}
     const COUNTRIES_COLUMNS=[
-      {{key:'country',label:'Country',left:true}},
+      {{key:'country',label:'Country',left:true,format:(v,row)=>countryHasVisual(row.country)?v:v+' †'}},
       {{key:'users',label:'Users',format:count}},
       {{key:'new_users',label:'New',format:v=>v!=null?count(v):'—'}},
       {{key:'sessions',label:'Sessions',format:count}},
@@ -7345,8 +7353,17 @@ def render_bigquery_dashboard_page(
     function renderGeoTable() {{
       if (!demoGeoPayload) return;
       document.getElementById('citiesTableTitle').textContent=tableView==='countries'?'Top countries':'Top cities';
-      if (tableView==='countries') renderTable('citiesTable',COUNTRIES_COLUMNS,demoGeoPayload.by_country,'No country data.');
-      else renderTable('citiesTable',CITIES_COLUMNS,demoGeoPayload.by_city,'No city data.');
+      const note=document.getElementById('citiesTableNote');
+      if (tableView==='countries') {{
+        const rows=demoGeoPayload.by_country;
+        renderTable('citiesTable',COUNTRIES_COLUMNS,rows,'No country data.');
+        const anyUnshaded=(rows||[]).some(r=>!countryHasVisual(r.country));
+        note.hidden=!anyUnshaded;
+        if (anyUnshaded) note.textContent='† Too small to show as a shaded shape on the map at this scale — the number here is still accurate.';
+      }} else {{
+        renderTable('citiesTable',CITIES_COLUMNS,demoGeoPayload.by_city,'No city data.');
+        note.hidden=true;
+      }}
     }}
     function bindGeoToggles() {{
       const mapHost=document.getElementById('geoMapViewChips');
