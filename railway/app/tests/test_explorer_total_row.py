@@ -12,6 +12,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
+from dashboard.assets import dashboard_css  # noqa: E402
 from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
     render_bigquery_dashboard_page,
 )
@@ -92,8 +93,9 @@ class ExplorerTotalRowMarkupTests(unittest.TestCase):
         self.assertIn("${nCamp} campaign${nCamp===1?'':'s'}", self.html)
 
     def test_footer_is_styled_and_not_expandable(self):
-        self.assertIn("#explorerTable tfoot td {", self.html)
-        self.assertIn("#explorerTable tfoot td.ga4-col {", self.html)
+        css = dashboard_css()[1]
+        self.assertIn("#explorerTable tfoot td {", css)
+        self.assertIn("#explorerTable tfoot td.ga4-col {", css)
         # No data-expandable on the row: clicking the total must not try to open
         # children (the delegated handler keys off tr[data-expandable]).
         foot = self.html.split('<tfoot><tr class="expl-total">', 1)[1][:400]

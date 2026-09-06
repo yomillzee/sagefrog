@@ -63,6 +63,22 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-06",
+        title="Dashboards load faster after the first page",
+        area="Client Dashboards",
+        kind="improved",
+        summary=(
+            "The dashboard's styling now downloads once and is reused, instead "
+            "of being re-sent inside every page. Pages are about a quarter "
+            "smaller, and moving between views is quicker after the first load."
+        ),
+        details=(
+            "Nothing about how any page looks has changed.",
+            "If a dashboard ever appears completely unstyled, it means the "
+            "stylesheet did not load — a refresh will fix it.",
+        ),
+    ),
+    Entry(
+        date="2026-09-06",
         title="“Choose emails” is usable on a phone again",
         area="Email Performance",
         kind="fixed",

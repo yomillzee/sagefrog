@@ -1,0 +1,618 @@
+
+    main { max-width:1320px; margin:0 auto; padding:20px 28px 56px; }
+    h2 { margin:0; color:var(--navy); font-size:1.05rem; font-weight:750; letter-spacing:-.005em; }
+    p { margin:6px 0 0; color:var(--muted); }
+    /* ---- Date bar (sticky) ---- */
+    /* Full-bleed sticky filter header — flush to the very top of the content
+       area (no gap above), spanning the full width of the main column, with an
+       inner wrapper that keeps the chips aligned to the same 1320px/28px grid
+       as the cards below. A hairline border + soft shadow separate it from the
+       scrolling content. */
+    .date-bar { position:sticky; top:0; z-index:50; background:var(--card); border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(16,33,67,.04), 0 6px 16px -12px rgba(16,33,67,.28); }
+    .date-bar[hidden] { display:none; }
+    .date-bar-inner { max-width:1320px; margin:0 auto; padding:13px 28px; display:flex; flex-direction:column; gap:10px; }
+    .date-bar-top { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+    .date-bar-bottom { display:flex; flex-wrap:wrap; gap:20px; align-items:center; }
+    label { display:grid; gap:5px; color:var(--muted); font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+    input[type=date] { border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 11px; font:inherit; font-size:.88rem; background:#fff; color:#102033; }
+    input[type=date]:focus-visible { outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }
+    button.primary { border:0; border-radius:var(--radius-sm); padding:9px 16px; background:var(--accent); color:#fff; font-weight:700; font-size:.88rem; cursor:pointer; box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }
+    button.primary:hover { background:#1a62b8; }
+    button.primary:disabled { opacity:.55; cursor:default; }
+    .filter-group { display:flex; align-items:center; gap:8px; }
+    /* `hidden` attr must win over the display:flex above — used to scope groups
+       to the tabs they apply to (Events, the Explorer filter bar). */
+    .filter-group[hidden] { display:none; }
+    .filter-label { color:var(--muted); font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+    .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
+    /* The Range and Compare pickers carry their own caption inside the field —
+       a calendar glyph on Range, a "vs" on Compare — instead of an uppercase
+       label beside it. That halves the width each control needs, which is what
+       keeps both on one line on a phone. Screen readers get the caption from
+       the .sr-only spans. */
+    .dd-lead { display:inline-flex; align-items:center; gap:7px; min-width:0; overflow:hidden; }
+    .dd-lead > span:not(.sr-only) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dd-icon { width:15px; height:15px; flex:none; color:var(--muted); }
+    /* The "vs" lead on the Compare picker, hidden while no window is chosen. */
+    .dd-vs { flex:none; color:var(--muted); font-weight:700; }
+    .dd-vs[hidden] { display:none; }
+    /* Range picker: a custom dropdown so the admin "Make default" + Apply
+       controls live inside the panel, under the preset list. Reuses the .ke-dd-*
+       base styling (toggle/panel/caret); these tune sizing + the option rows. */
+    .range-dd-toggle { min-width:150px; }
+    .range-dd-panel { width:220px; }
+    /* Two classes, so this beats .ke-dd-list's 260px cap regardless of source
+       order -- the preset list is short and should never scroll internally. */
+    .range-dd-panel .range-dd-list { max-height:none; }
+    .range-opt { display:block; width:100%; text-align:left; border:0; background:none; border-radius:6px; padding:7px 9px; font:inherit; font-size:.82rem; font-weight:600; color:var(--navy); cursor:pointer; }
+    .range-opt:hover { background:#f4f8fd; }
+    .range-opt.active { background:#eaf2fd; color:var(--accent); }
+    /* "Custom range…" row + the start/end form it reveals inside the panel.
+       The generic label rule (grid, uppercase caption) is exactly the stacked
+       caption-over-input layout wanted here, so only the input is retuned. */
+    .range-custom-open { border-top:1px solid var(--line-soft); border-radius:0 0 6px 6px; margin-top:2px; padding-top:8px; }
+    .range-custom { display:grid; gap:7px; margin-top:8px; padding-top:8px; border-top:1px solid var(--line-soft); }
+    .range-custom[hidden] { display:none; }
+    .range-custom .range-custom-field { gap:3px; font-size:.66rem; }
+    .range-custom input[type=date] { width:100%; padding:5px 7px; font-size:.78rem; }
+    .range-custom-apply { justify-self:start; }
+    .range-custom-err { font-size:.72rem; font-weight:600; color:var(--bad); }
+    .range-custom-err:empty { display:none; }
+    /* Admin footer inside the Range dropdown (checkbox + Apply). The generic
+       label rule above forces grid/uppercase, so reset to an inline checkbox. */
+    .range-dd-foot { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:8px; border-top:1px solid var(--line-soft); }
+    .range-default { display:inline-flex; align-items:center; gap:5px; margin:0; text-transform:none; letter-spacing:0; font-size:.74rem; font-weight:700; color:var(--muted); cursor:pointer; white-space:nowrap; }
+    .range-default input { margin:0; cursor:pointer; accent-color:var(--accent); }
+    .range-apply { border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:8px; padding:5px 12px; font:inherit; font-size:.76rem; font-weight:700; cursor:pointer; transition:background .15s,border-color .15s; }
+    .range-apply:hover:not(:disabled) { border-color:#b9c8dc; background:#f4f8fd; }
+    .range-apply:disabled { opacity:.55; cursor:default; }
+    .range-default-status { flex-basis:100%; font-size:.72rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--muted); }
+    .range-default-status.err { color:var(--bad); }
+    .range-default-status.ok { color:#178a4c; }
+    /* Compare picker: same dropdown shell as Range, with a footer that spells
+       out the resolved comparison dates instead of the admin default controls.
+       On No comparison there are no dates, so the footer empties itself. */
+    .cmp-range-foot { margin-top:6px; }
+    .cmp-range-foot .range-default-status { color:var(--muted); }
+    /* Backfill warning: the comparison window reaches back past a source's
+       synced history, so its deltas are incomplete. A badge beside the Compare
+       picker — the control it qualifies — with the detail in a hover/focus
+       tooltip, so the filter bar keeps its one-line height. */
+    .cmp-notice { position:relative; display:inline-flex; align-items:center; justify-content:center; flex:none; width:22px; height:22px; padding:0; border:1px solid #f0d9a0; border-radius:50%; background:#fdf7e8; color:#a9760a; cursor:help; transition:background .12s, border-color .12s; }
+    .cmp-notice[hidden] { display:none; }
+    .cmp-notice:hover, .cmp-notice:focus-visible { background:#fbeeca; border-color:#e0bf6d; }
+    .cmp-notice-icon { font-size:.82rem; line-height:1; }
+    .cmp-notice-tip { position:absolute; z-index:60; top:calc(100% + 8px); left:50%; transform:translateX(-50%); width:min(340px, 72vw); border:1px solid #f0d9a0; background:#fdf7e8; color:#7a5806; border-radius:var(--radius-sm); box-shadow:var(--shadow); padding:9px 11px; font-size:.78rem; font-weight:600; line-height:1.45; text-align:left; text-transform:none; letter-spacing:0; white-space:normal; visibility:hidden; opacity:0; transition:opacity .12s; pointer-events:none; }
+    .cmp-notice:hover .cmp-notice-tip, .cmp-notice:focus-visible .cmp-notice-tip { visibility:visible; opacity:1; }
+    .cmp-notice-tip strong { font-weight:800; }
+    .chips { display:flex; flex-wrap:wrap; gap:5px; }
+    .chip { border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:999px; padding:4px 12px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }
+    .chip:hover { border-color:#b9c8dc; background:#f4f8fd; }
+    .chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .chip.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+    .chip.active:hover { background:#0d2c4d; }
+    /* Compact segmented toggle (e.g. Daily/Weekly) that sits on the card title line. */
+    .chips.seg { gap:0; flex-wrap:nowrap; padding:2px; background:#f1f4f8; border:1px solid var(--line); border-radius:8px; }
+    .chips.seg .chip { border:0; border-radius:6px; background:none; padding:3px 12px; font-size:.76rem; color:var(--muted); }
+    .chips.seg .chip:hover { background:#fff; color:var(--navy); }
+    .chips.seg .chip.active { background:#fff; color:var(--navy); border-color:transparent; box-shadow:0 1px 2px rgba(16,33,67,.14); }
+    .chips.seg .chip.active:hover { background:#fff; }
+    /* A filter that belongs to one card rather than the page sits in that
+       card's head (Platform on Paid summary / Campaign explorer), sized down a
+       notch so it reads as part of the heading row. */
+    .card-filter { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .card-filter .filter-label { font-size:.64rem; }
+    /* These pills are the only control on the Paid summary head, and at rest
+       they were quiet enough to read as labels. The hover state moves: accent
+       border, tinted ground and a small lift, so a pointer over one says
+       "clickable" before it is clicked. */
+    .chips.platform-chips .chip { padding:3px 10px; font-size:.75rem; transition:background .12s, border-color .12s, color .12s, box-shadow .12s, transform .12s; }
+    .chips.platform-chips .chip:hover { border-color:var(--accent); background:#eaf2fd; color:var(--accent); box-shadow:0 1px 3px rgba(16,33,67,.12); transform:translateY(-1px); }
+    .chips.platform-chips .chip.active:hover { background:#0d2c4d; color:#fff; border-color:#0d2c4d; }
+    @media (prefers-reduced-motion: reduce) { .chips.platform-chips .chip:hover { transform:none; } }
+    /* ---- Key-event searchable dropdown ---- */
+    .ke-dropdown { position:relative; display:inline-block; }
+    .ke-dd-toggle { display:inline-flex; align-items:center; gap:8px; min-width:190px; justify-content:space-between; border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 12px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:border-color .12s; }
+    .ke-dd-toggle:hover { border-color:#b9c8dc; }
+    .ke-dropdown.open .ke-dd-toggle { border-color:var(--accent); }
+    .ke-dd-caret { color:var(--muted); font-size:.7rem; transition:transform .12s; }
+    .ke-dropdown.open .ke-dd-caret { transform:rotate(180deg); }
+    .ke-dd-panel { position:absolute; z-index:30; top:calc(100% + 4px); left:0; width:280px; background:#fff; border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow); padding:8px; }
+    .ke-dd-search { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; font-size:.82rem; color:var(--navy); margin-bottom:6px; }
+    .ke-dd-search:focus { outline:none; border-color:var(--accent); }
+    .ke-dd-list { max-height:260px; overflow-y:auto; display:flex; flex-direction:column; gap:1px; }
+    .ke-dd-option { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:.82rem; font-weight:600; color:var(--navy); text-transform:none; letter-spacing:0; }
+    .ke-dd-option:hover { background:#f4f8fd; }
+    .ke-dd-option.active { background:#eaf2fd; }
+    .ke-dd-option input { margin:0; accent-color:var(--accent); cursor:pointer; }
+    .ke-dd-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ke-dd-count { color:var(--muted); font-size:.74rem; font-weight:600; }
+    .ke-dd-empty { color:var(--muted); font-size:.8rem; padding:14px 8px; text-align:center; }
+    /* ---- Timeline annotation markers ----
+       The pin sits on the plot's top edge, small enough to read as a tick rather
+       than as data. An internal-only marker is hollow so an agency user can tell
+       at a glance which of these the client is also seeing. */
+    .anno-host { position:relative; }
+    .anno-layer { position:absolute; inset:0; pointer-events:none; }
+    .anno-pin { position:absolute; top:0; width:11px; height:11px; margin-left:-5.5px; padding:0; border:1.5px solid var(--anno-color,#64748b); border-radius:50%; background:var(--anno-color,#64748b); box-shadow:0 0 0 2px var(--card); cursor:default; pointer-events:auto; }
+    .anno-pin.internal { background:var(--card); }
+    .anno-pin:hover, .anno-pin:focus-visible { transform:scale(1.28); outline:none; }
+    .anno-pin:focus-visible { box-shadow:0 0 0 2px var(--card), 0 0 0 4px #bcd4f0; }
+
+    /* ---- Explorer filter dropdowns (sticky bar) ---- */
+    #explorerFilterBar { gap:8px; flex-wrap:wrap; }
+    .expl-dd .ke-dd-toggle { min-width:0; }
+    .ke-dd-toggle.has-active { border-color:var(--accent); color:var(--accent); }
+    /* ---- Sections ---- */
+    section { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px 20px; margin-bottom:16px; box-shadow:var(--shadow); }
+    /* ---- First-run onboarding card ---- */
+    .onboarding-card { text-align:center; padding:40px 24px; }
+    .onboarding-icon { width:52px; height:52px; margin:0 auto 14px; border-radius:14px; background:#eaf2fd; color:var(--accent); display:flex; align-items:center; justify-content:center; }
+    .onboarding-icon svg { width:26px; height:26px; }
+    .onboarding-card h2 { font-size:1.15rem; margin:0 0 6px; }
+    .onboarding-card p { max-width:440px; margin:0 auto 18px; color:var(--muted); font-size:.9rem; line-height:1.5; }
+    .onboarding-cta { display:inline-block; background:var(--accent); color:#fff; text-decoration:none; font-weight:700; font-size:.9rem; padding:10px 20px; border-radius:var(--radius-sm); box-shadow:0 1px 2px rgba(16,33,67,.12); transition:background .15s; }
+    .onboarding-cta:hover { background:#1a62b8; }
+    /* ---- Step-by-step onboarding checklist ---- */
+    .onboarding-steps { text-align:left; padding:28px 26px 26px; }
+    .onboarding-steps .onboarding-icon { margin:0 0 14px; }
+    .onboarding-steps h2 { text-align:left; }
+    .onboarding-steps > p { text-align:left; max-width:600px; margin:0 0 22px; }
+    .ob-steps { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:20px; }
+    .ob-step { display:flex; gap:14px; }
+    .ob-step-num { flex:0 0 28px; width:28px; height:28px; border-radius:50%; background:#eaf2fd; color:var(--accent); font-weight:700; font-size:.86rem; display:flex; align-items:center; justify-content:center; }
+    .ob-step-body { flex:1; min-width:0; }
+    .ob-step-title { font-weight:700; font-size:.96rem; margin-bottom:3px; }
+    .ob-step-desc { color:var(--muted); font-size:.86rem; line-height:1.5; margin-bottom:9px; }
+    .ob-step-link { display:inline-block; color:var(--accent); font-weight:600; font-size:.84rem; text-decoration:none; }
+    .ob-step-link:hover { text-decoration:underline; }
+    .ob-copy { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 10px; }
+    .ob-copy code { background:#f6f8fb; border:1px solid var(--line); border-radius:6px; padding:5px 9px; font-size:.8rem; word-break:break-all; }
+    .ob-copy-btn { border:1px solid var(--line); background:var(--card); color:var(--accent); font-weight:600; font-size:.78rem; padding:5px 11px; border-radius:6px; cursor:pointer; white-space:nowrap; transition:background .15s; }
+    .ob-copy-btn:hover { background:#eaf2fd; }
+    .ob-copy-btn.ok { color:#178a4c; border-color:#178a4c; }
+    /* Wraps so a card head carrying its own filter (e.g. Platform chips on Paid
+       summary) drops the controls to a second line instead of squeezing them. */
+    .sec-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+    .sec-head h2 { margin:0; }
+    .sec-head .status { margin:0; font-size:.76rem; text-align:right; flex-shrink:0; }
+    .sec-head-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
+    /* ---- Tabbed panel card ----
+       Two related panels share one full-width card and swap on a tab, instead of
+       sitting side by side at half width where the tables were too narrow to read
+       (Pages / Landing Pages, Traffic / New user acquisition). The tabs *are* the
+       card's heading — same size and weight as an h2 — with the active one
+       underlined on the head's rule. Only the active pane's status shows, so the
+       right of the head stays a single line. */
+    .pnl-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:16px; }
+    /* On a phone the two tab labels are wider than the card: let the tablist
+       scroll sideways rather than push the whole page wide. The 1px of padding
+       (cancelled by the negative margin) keeps the active underline from being
+       clipped by the scroller. */
+    .pnl-tabs { display:flex; gap:24px; min-width:0; max-width:100%; overflow-x:auto; padding-bottom:1px; margin-bottom:-1px; scrollbar-width:none; }
+    .pnl-tabs::-webkit-scrollbar { display:none; }
+    .pnl-tab { position:relative; border:0; background:none; padding:0 0 10px; font:inherit; font-size:1.05rem; font-weight:750; letter-spacing:-.005em; color:var(--muted); cursor:pointer; white-space:nowrap; }
+    .pnl-tab[hidden] { display:none; }
+    .pnl-tab:hover { color:var(--navy); }
+    .pnl-tab[aria-selected="true"] { color:var(--navy); }
+    /* The active underline sits on top of .pnl-head's border, not below it. */
+    .pnl-tab[aria-selected="true"]::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--accent); border-radius:2px 2px 0 0; }
+    .pnl-tab:focus-visible { outline:2px solid #bcd4f0; outline-offset:3px; border-radius:4px; }
+    /* One tab left (the other panel is switched off) — nothing to choose, so it
+       reads as a plain heading. */
+    .pnl-tabs.one-tab .pnl-tab[aria-selected="true"]::after { display:none; }
+    .pnl-head .status { margin:0 0 10px; font-size:.76rem; text-align:right; flex-shrink:0; }
+    .pnl-head-actions { display:flex; align-items:center; gap:10px; margin:0 0 8px; flex-shrink:0; }
+    .pnl-head-actions .status { margin:0; }
+    .pnl-head .status[hidden] { display:none; }
+    .pnl-pane[hidden] { display:none; }
+    /* Campaign explorer: admin "Edit filters" button + popover */
+    .ef-edit { position:relative; }
+    .ef-edit-btn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--navy); font:inherit; font-size:.8rem; font-weight:700; padding:6px 11px; cursor:pointer; transition:background .15s,border-color .15s; }
+    .ef-edit-btn:hover { border-color:#b9c8dc; background:#f4f8fd; }
+    .ef-edit-btn[aria-expanded="true"] { border-color:#9bbfe6; background:#eef5fd; }
+    .ef-edit-btn svg { opacity:.8; }
+    .ef-pop { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-width:82vw; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 38px rgba(16,33,67,.22); z-index:50; text-align:left; }
+    .ef-pop-head { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--line-soft); font-size:.85rem; font-weight:750; color:var(--navy); }
+    .ef-pop-x { appearance:none; border:0; background:none; font-size:1.2rem; line-height:1; color:#8a97a8; cursor:pointer; padding:0 2px; }
+    .ef-pop-x:hover { color:var(--navy); }
+    .ef-pop-body { padding:13px 14px; }
+    .ef-pop-desc { margin:0 0 10px; font-size:.76rem; line-height:1.5; color:var(--muted); }
+    .ef-pop-desc code { background:#eef4fb; padding:1px 5px; border-radius:4px; }
+    .ef-pop textarea { width:100%; min-height:150px; border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; resize:vertical; color:#102033; background:#fff; }
+    .ef-pop textarea:focus-visible { outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }
+    .ef-pop-actions { display:flex; align-items:center; gap:12px; margin-top:12px; }
+    .ef-pop-btn { appearance:none; border:0; border-radius:8px; padding:8px 14px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; }
+    .ef-pop-btn.primary { background:var(--accent); color:#fff; }
+    .ef-pop-btn.primary:hover:not(:disabled) { background:#1a62b8; }
+    .ef-pop-btn:disabled { opacity:.55; cursor:default; }
+    .ef-status { font-size:.78rem; color:var(--muted); }
+    .ef-status.err { color:var(--bad); }
+    .ef-status.ok { color:#178a4c; }
+    /* Website Analytics page-path scope: top-of-pane bar (scope indicator +
+       admin "Edit page filter" editor). Editor reuses the .ef-* styles above. */
+    .apf-bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 16px; }
+    .apf-bar[hidden] { display:none; }
+    .apf-bar .ef-edit { margin-left:auto; }
+    .apf-scope { display:inline-flex; align-items:center; gap:6px; font-size:.82rem; color:var(--navy); background:#eef5fd; border:1px solid var(--line); border-radius:999px; padding:6px 13px; font-weight:600; }
+    .apf-scope[hidden] { display:none; }
+    .apf-scope svg { opacity:.75; flex-shrink:0; }
+    .apf-scope code { background:rgba(29,111,208,.12); padding:1px 6px; border-radius:5px; font-size:.78rem; }
+    /* Small clarifying line under a section heading (e.g. what the scoped
+       sessions series counts). Hidden unless the page sets its text. */
+    .sec-note { margin:-4px 0 12px; font-size:.78rem; line-height:1.5; color:var(--muted); }
+    .sec-note[hidden] { display:none; }
+    /* Campaign explorer: the "more options" kebab in the section head. It holds
+       the GA4-verified switch plus (for an admin) the Campaigns and Edit filters
+       editors, whose own .ef-pop popovers open to the LEFT of the menu so they
+       clear the card edge. */
+    .adv-menu { position:relative; flex-shrink:0; }
+    .adv-btn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }
+    .adv-btn:hover { color:var(--accent); border-color:#b9c8dc; background:#f4f8fd; }
+    .adv-btn[aria-expanded="true"] { color:var(--accent); border-color:#9bbfe6; background:#eef5fd; }
+    .adv-pop { position:absolute; top:calc(100% + 8px); right:0; width:264px; max-width:82vw; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 38px rgba(16,33,67,.22); z-index:60; padding:6px; text-align:left; }
+    .adv-pop[hidden] { display:none; }
+    .adv-pop-head { padding:6px 9px 7px; font-size:.72rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+    .adv-sep { height:1px; background:var(--line-soft); margin:5px 3px; }
+    .adv-switch-row { display:flex; align-items:flex-start; gap:10px; padding:7px 9px; border-radius:8px; cursor:pointer; }
+    .adv-switch-row:hover { background:#f4f8fd; }
+    .adv-switch-txt { display:flex; flex-direction:column; gap:2px; font-size:.82rem; font-weight:700; color:var(--navy); line-height:1.3; }
+    .adv-switch-txt small { font-size:.72rem; font-weight:500; color:var(--muted); line-height:1.4; }
+    .adv-switch { margin:2px 0 0 auto; flex-shrink:0; cursor:pointer; accent-color:var(--accent); width:15px; height:15px; }
+    /* The two admin editors become menu rows: full width, no button chrome. */
+    .adv-pop .ef-edit-btn { width:100%; justify-content:flex-start; border:0; border-radius:8px; background:none; padding:8px 9px; font-weight:700; }
+    .adv-pop .ef-edit-btn:hover, .adv-pop .ef-edit-btn[aria-expanded="true"] { background:#f4f8fd; }
+    .adv-pop .ef-pop { top:-6px; right:calc(100% + 10px); }
+    @media (max-width:760px) {
+      /* The head's actions wrap on a phone, which would leave the kebab
+         mid-row with a right-anchored menu hanging off the left edge. Pin it to
+         the end of its line, keep the menu inside the viewport, and drop the
+         sub-popovers underneath -- there is no room beside them. */
+      .sec-head-actions .adv-menu { margin-left:auto; }
+      .adv-pop { width:min(264px, calc(100vw - 28px)); }
+      .adv-pop .ef-pop { top:calc(100% + 6px); right:0; }
+    }
+    /* Campaign explorer: admin "Campaigns" allowlist picker (checklist popover) */
+    .ec-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--accent); color:#fff; font-size:.66rem; font-weight:800; }
+    .ec-badge[hidden] { display:none; }
+    .ec-search { width:100%; border:1px solid var(--line); border-radius:8px; padding:7px 10px; font:inherit; font-size:.82rem; color:#102033; background:#fff; margin-bottom:8px; }
+    .ec-search:focus-visible { outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }
+    .ec-tools { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+    .ec-tool { appearance:none; border:0; background:none; color:var(--accent); font:inherit; font-size:.76rem; font-weight:700; cursor:pointer; padding:0; }
+    .ec-tool:hover { text-decoration:underline; }
+    .ec-count { margin-left:auto; font-size:.72rem; color:var(--muted); }
+    .ec-list { max-height:240px; overflow-y:auto; border:1px solid var(--line); border-radius:9px; padding:4px; }
+    .ec-list .ec-empty { padding:14px 10px; font-size:.78rem; color:var(--muted); text-align:center; }
+    .ec-option { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:7px; font-size:.82rem; color:var(--navy); cursor:pointer; text-transform:none; letter-spacing:0; font-weight:500; }
+    .ec-option:hover { background:#f4f8fd; }
+    .ec-option input { margin:0; cursor:pointer; accent-color:var(--accent); flex-shrink:0; }
+    .ec-option .ec-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ec-option[hidden] { display:none; }
+    /* Paid-trends metric picker: chips on desktop, a compact dropdown on phones
+       (see the max-width:720px block) where the chip row would overflow. */
+    .ov-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
+    .ov-more { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--muted); padding:0; font:inherit; cursor:pointer; transition:color .14s, border-color .14s, background .14s, box-shadow .14s; }
+    .ov-more:hover { color:var(--accent); border-color:var(--accent); background:var(--card); box-shadow:0 1px 4px rgba(29,111,208,.18); }
+    .ov-more-arrow { width:16px; height:16px; display:block; transition:transform .14s; }
+    .ov-more:hover .ov-more-arrow { transform:translateX(2px); }
+    /* ---- Panel edit mode (admin-only; Overview + Campaign Explorer) ---- */
+    /* Entered from the sidebar kebab; no always-on chrome. This banner and the
+       per-panel edit bars appear only while an .ov-editable pane is .is-editing. */
+    .ov-editing-banner { display:none; }
+    .ov-editable.is-editing .ov-editing-banner { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 14px; padding:9px 13px; border:1px solid var(--accent); border-radius:var(--radius-sm); background:rgba(29,111,208,.06); position:sticky; top:8px; z-index:20; }
+    .ov-editing-badge { display:inline-flex; align-items:center; gap:6px; font-size:.76rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; color:var(--accent); }
+    .ov-editing-badge::before { content:""; width:8px; height:8px; border-radius:999px; background:var(--accent); box-shadow:0 0 0 3px rgba(29,111,208,.18); }
+    .ov-edit-hint { color:var(--muted); font-size:.78rem; }
+    .ov-edit-status { color:var(--muted); font-size:.76rem; margin-left:auto; }
+    .ov-edit-status.is-error { color:var(--bad); }
+    .ov-edit-done { border:1px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff; padding:6px 16px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; transition:background .14s, border-color .14s; }
+    .ov-edit-done:hover { background:var(--blue); border-color:var(--blue); }
+
+    /* Per-panel edit bar: revealed only while the admin is editing. */
+    .ov-edit-bar { display:none; }
+    .is-admin .ov-editable.is-editing .ov-edit-bar { display:flex; align-items:center; gap:9px; margin:0 0 8px; padding:6px 10px; border:1px dashed var(--line); border-radius:var(--radius-sm); background:rgba(29,111,208,.05); }
+    .ov-drag { display:inline-flex; align-items:center; justify-content:center; color:var(--muted); cursor:grab; }
+    .ov-drag:active { cursor:grabbing; }
+    .ov-drag svg { display:block; }
+    .ov-card-name { font-size:.8rem; font-weight:600; color:var(--navy); }
+    .ov-hide-toggle { margin-left:auto; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--muted); padding:4px 12px; font:inherit; font-size:.76rem; font-weight:600; cursor:pointer; transition:color .14s, border-color .14s, background .14s; }
+    .ov-hide-toggle:hover { color:var(--accent); border-color:var(--accent); }
+    .ov-unit.ov-unit--hidden .ov-hide-toggle { color:#fff; background:var(--accent); border-color:var(--accent); }
+    /* A hidden panel is gone for clients (never emitted) and, for an admin, only
+       reappears — greyed — while editing so it can be shown back. */
+    .ov-unit.ov-unit--hidden { display:none; }
+    .is-admin .ov-editable.is-editing .ov-unit.ov-unit--hidden { display:block; opacity:.5; }
+    .ov-editable.is-editing .ov-unit { border:1px solid transparent; border-radius:var(--radius-sm); padding:4px; transition:border-color .12s, background .12s; }
+    .ov-editable.is-editing .ov-unit.is-drag-over { border-color:var(--accent); background:rgba(29,111,208,.04); }
+    .ov-editable.is-editing .ov-unit.is-dragging { opacity:.4; }
+
+    .status { color:var(--muted); font-size:.82rem; margin:0 0 12px; }
+    .status.error { color:var(--bad); }
+    /* ---- Metric cards ---- */
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; }
+    .card { border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:var(--radius-sm); padding:13px 14px 14px; background:#fff; }
+    .metric-card { appearance:none; -webkit-appearance:none; font:inherit; text-align:left; width:100%; cursor:pointer; transition:box-shadow .15s,border-color .15s; }
+    .metric-card:hover { border-color:var(--accent); }
+    .metric-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .metric-card.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; background:#f3f8ff; }
+    /* The whole card is the tooltip trigger (.ps-tip, from the Site Performance
+       pane's CSS, which this page already carries): hovering or tabbing to a card
+       explains its metric. */
+    .metric-card .card-title { display:flex; align-items:center; gap:5px; }
+    /* Campaign explorer's "metrics over time" chart -- the panel between the
+       summary cards and the tree table. Its title names whichever metrics the
+       cards above have selected. */
+    .expl-trend { margin-bottom:14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#fff; }
+    .expl-trend-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; }
+    .expl-trend-title { color:var(--navy); font-weight:700; font-size:.86rem; }
+    #explorerTrendBody { padding:0 14px 14px; }
+    .card-title { color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
+    .card-value { margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; }
+    .card-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:9px; min-height:22px; }
+    .card-foot .cmp-delta { font-size:.74rem; white-space:nowrap; }
+    .cmp-delta.flat { color:var(--muted); }
+    .spark { width:66px; height:22px; flex:0 0 auto; opacity:.9; }
+    .spark-fill { opacity:.13; }
+    .spark-base { opacity:.3; stroke-width:1; }
+    .spark-empty { width:66px; height:22px; flex:0 0 auto; }
+    /* A card with no comparison period has nothing to put on the left of its
+       footer, so the spark takes the whole width rather than sitting next to a
+       placeholder dash. Browsers without :has() keep the 66px spark — the row
+       just stays right-aligned. */
+    .card-foot:not(:has(.cmp-delta)) .spark { width:100%; height:30px; }
+    .card-value[title] { cursor:help; }
+    .card-delta { margin-top:4px; font-size:.76rem; font-weight:700; }
+    .card-delta.up { color:var(--ok); }
+    .card-delta.down { color:var(--bad); }
+    .card-delta.flat { color:var(--muted); font-weight:600; }
+    /* The bar across the top of a metric card takes the colour of that card's
+       vs-previous delta, so a wall of cards reads as good/bad at arm's length
+       before any number is. It follows the delta's *meaning*, not its arrow:
+       the delta classes are already assigned by whether the move is good for
+       that metric (CPA falling is green), so a rising CPA colours the bar red.
+       Cards with no comparison, a flat move, or a direction-less metric
+       (Spend) keep the default blue. :has() is the whole mechanism — every
+       card is built by a different JS branch, and none of them needs to know
+       about this. Browsers without :has() just keep blue bars. */
+    .card:has(.cmp-delta.up), .card:has(.card-delta.up) { border-top-color:var(--ok); }
+    .card:has(.cmp-delta.down), .card:has(.card-delta.down) { border-top-color:var(--bad); }
+    /* ---- Goal + peer benchmark rows (admin preview) ----
+       Both sit under the delta and answer the question the delta cannot: not
+       "which way did this move" but "is this where it should be". They are
+       deliberately quiet — small type, a hairline rule above — because on a card
+       the value is still the headline and these are the footnote that qualifies
+       it. Neither row renders at all when there is nothing to say, so a card
+       without a target or without peers looks exactly as it did before. */
+    .card-goal { margin-top:8px; padding-top:8px; border-top:1px solid var(--line-soft); }
+    .cg-bar { height:4px; border-radius:999px; background:#eef2f7; overflow:hidden; }
+    .cg-bar > span { display:block; height:100%; border-radius:999px; background:var(--muted); transition:width .3s ease; }
+    .cg-text { margin-top:5px; font-size:.7rem; font-weight:700; color:var(--muted); line-height:1.3; }
+    .card-goal.good .cg-bar > span { background:var(--ok); }
+    .card-goal.good .cg-text { color:var(--ok); }
+    .card-goal.warn .cg-bar > span { background:#b7791f; }
+    .card-goal.warn .cg-text { color:#b7791f; }
+    .card-goal.bad .cg-bar > span { background:var(--bad); }
+    .card-goal.bad .cg-text { color:var(--bad); }
+    .card-bench { margin-top:7px; font-size:.7rem; color:var(--muted); font-weight:600; line-height:1.35; display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+    .card-goal + .card-bench { margin-top:6px; }
+    .card-bench b { color:var(--navy); font-weight:800; }
+    .cb-verdict { font-weight:800; }
+    .cb-verdict.ahead { color:var(--ok); }
+    .cb-verdict.behind { color:var(--bad); }
+    .cb-verdict.level { color:var(--muted); }
+    /* A bucket at or below the thin-sample cutoff is directional, not a
+       benchmark — say so on the row rather than in a tooltip nobody opens. */
+    .cb-thin { padding:0 5px; border-radius:999px; background:#fdf6e3; border:1px solid #f0e0b6; color:#8a6d1f; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+    /* Preview marker: these two rows are admin-only until the framing is agreed,
+       and an admin needs to see at a glance that a client would not see this. */
+    .adm-preview { display:inline-block; padding:0 5px; border-radius:999px; background:#eef4fb; border:1px solid #cfe0f3; color:var(--accent); font-size:.6rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+    /* HubSpot MQL tracker (Overview home) */
+    .mql-panel .card { border-top-color:#ff7a59; }
+    .mql-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#ff7a59; margin-right:8px; vertical-align:middle; }
+    .mql-sub { color:var(--muted); font-size:.74rem; }
+    .mql-delta { font-size:.74rem; font-weight:700; white-space:nowrap; }
+    .mql-delta.up { color:var(--ok); }
+    .mql-delta.down { color:var(--bad); }
+    .mql-delta.flat { color:var(--muted); font-weight:600; }
+    .mql-spark { width:100%; height:30px; display:block; margin:7px 0 2px; }
+    /* LinkedIn Overview panel. Its heading carries the LinkedIn glyph in place of
+       a .mql-dot, and its card labels stay sentence case — the condensed
+       all-caps treatment the other panels use is harder to scan at this size. */
+    .li-glyph { width:14px; height:14px; margin-right:8px; vertical-align:-2px; }
+    .li-panel .card-title { text-transform:none; letter-spacing:0; font-size:.74rem;
+      font-weight:700; }
+    /* LinkedIn Overview card — ranked "views by page section" column. Wants more
+       room than a number card, so it claims two grid tracks where they exist. */
+    .li-sections { grid-column:span 2; min-width:0; }
+    .li-bars { display:flex; flex-direction:column; gap:8px; margin-top:9px; }
+    .li-bar-row { display:grid; grid-template-columns:1fr auto; gap:3px 10px; align-items:center; font-size:.78rem; }
+    .li-bar-label { color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .li-bar-val { text-align:right; color:var(--navy); font-weight:700; font-variant-numeric:tabular-nums; }
+    .li-bar-val span { color:var(--muted); font-weight:600; font-size:.7rem; margin-left:5px; }
+    .li-bar-track { grid-column:1 / -1; display:block; background:#e9eef5; border-radius:5px; height:6px; overflow:hidden; }
+    .li-bar-fill { display:block; height:100%; border-radius:5px; min-width:3px; background:#0A66C2; }
+    .cmp-warn { display:inline-block; margin-left:6px; font-size:.85rem; cursor:help; color:#b78103; }
+    .cmp-warn[hidden] { display:none; }
+    /* ---- Tables ----
+       The slim scrollbar treatment for .table-wrap (and the dropdown lists
+       above) lives in base_layout's LIGHT_SCROLLBAR_CSS, shared with every
+       other page. */
+    .table-wrap { overflow:auto; border:1px solid var(--line-soft); border-radius:var(--radius-sm); }
+    table { border-collapse:collapse; width:100%; min-width:600px; font-size:.86rem; }
+    th,td { padding:10px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; }
+    tbody tr:last-child td { border-bottom:0; }
+    tbody tr:hover td { background:#f7faff; }
+    th { background:#f4f7fb; color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; position:sticky; top:0; }
+    th.left,td.left { text-align:left; }
+    th.gsc-sort { cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }
+    th.gsc-sort:hover { background:#e9eef5; color:#33455e; }
+    th.gsc-sort.active { color:var(--accent); }
+    /* Δ Position movement badges (queries table) */
+    .gsc-mv { display:inline-block; font-size:.74rem; font-weight:800; padding:2px 7px; border-radius:999px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .gsc-mv-up { color:#0a7f3f; background:#e7f6ee; }
+    .gsc-mv-down { color:#c02626; background:#fdecec; }
+    .gsc-mv-flat { color:#8a97a8; background:transparent; font-weight:600; }
+    .gsc-mv-new { color:#1769aa; background:#e9f1fb; }
+    /* CTR read-out: a dot saying whether the click-through rate is ahead of,
+       in line with, or behind what a query's average rank normally earns. */
+    .gsc-ctr { display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; }
+    .gsc-ctr-dot { width:6px; height:6px; border-radius:50%; flex:none; background:#c9d3e0; }
+    .gsc-ctr-above .gsc-ctr-dot { background:#0a7f3f; }
+    .gsc-ctr-below .gsc-ctr-dot { background:#d97706; }
+    /* Keyword watchlist: one row per watched keyword, with a rank spark line. */
+    #gscWatchTable td.left { max-width:0; }
+    #gscWatchTable td.left > * { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .watch-kw { font-weight:700; }
+    .watch-variants { font-size:.64rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:#7d8ba0; margin-left:5px; }
+    .watch-spark { display:inline-flex; align-items:center; gap:8px; justify-content:flex-end; }
+    .watch-pos { font-variant-numeric:tabular-nums; font-weight:800; min-width:2.4em; text-align:right; }
+    .watch-pos-none { color:#9aa7b8; font-weight:600; }
+    /* Editing happens in the list itself (admin only): the keyword and page
+       cells are click-to-edit, so the table stays the one place the watchlist
+       lives instead of a form that shadows it. */
+    .watch-btn { border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:var(--radius-sm); padding:4px 11px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; transition:border-color .12s, color .12s; }
+    .watch-btn:hover { border-color:#9bbfe6; color:var(--accent); }
+    .watch-btn-primary { border-color:var(--accent); color:#fff; background:var(--accent); }
+    .watch-btn-primary:hover { color:#fff; filter:brightness(1.06); }
+    .watch-hint { font-size:.7rem; color:#7d8ba0; margin:7px 0 0; }
+    /* Bulk add popover, anchored under its button. Deliberately sets no display
+       property: the `hidden` attribute is what opens and closes it, and an
+       author `display` rule would beat it (which is exactly how the first
+       version ended up permanently open). */
+    .watch-bulk-wrap { position:relative; }
+    .watch-pop { position:absolute; right:0; top:calc(100% + 7px); z-index:60; width:min(420px, 78vw); padding:11px; text-align:left; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; box-shadow:0 10px 26px rgba(24,39,58,.16); }
+    .watch-pop textarea { width:100%; box-sizing:border-box; font:inherit; font-size:.8rem; line-height:1.5; padding:7px 9px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; color:inherit; resize:vertical; }
+    .watch-pop textarea:focus { outline:none; border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }
+    .watch-pop-foot { display:flex; align-items:center; gap:8px; margin-top:9px; }
+    /* On a narrow screen the anchored box would hang off the edge, so it drops
+       to the full width of the panel instead. */
+    @media (max-width: 560px) {
+      .watch-pop { position:fixed; left:12px; right:12px; top:auto; width:auto; }
+    }
+    /* Click-to-edit affordance: only an admin gets the cursor and the hover
+       underline, so a client's table reads as plain text. */
+    .is-admin .watch-editable { cursor:text; }
+    .is-admin .watch-editable:hover { box-shadow:inset 0 -1px 0 #c9d3e0; }
+    .watch-cell-in { width:100%; box-sizing:border-box; font:inherit; font-size:.82rem; padding:3px 6px; border:1px solid #9bbfe6; border-radius:var(--radius-sm); background:#fff; color:inherit; }
+    .watch-cell-in:focus { outline:none; box-shadow:0 0 0 2px #e2eefb; }
+    /* A row added but not yet named -- tinted so it is obvious the list is
+       waiting on you, and it stays at the top until it has a keyword. */
+    .watch-draft td { background:#fbfdff; }
+    /* Drag handle. Only meaningful in list order, where the row's position is
+       the thing being stored -- under a metric sort the cell is a button back to
+       list order instead, since dragging could not mean anything there. */
+    .watch-grip { display:inline-block; color:#c9d3e0; cursor:grab; line-height:1; padding:2px 3px; border-radius:3px; font-size:.9rem; letter-spacing:-1px; }
+    tr:hover .watch-grip { color:#8a97a8; }
+    .watch-grip:hover, .watch-grip:focus-visible { color:var(--accent); background:#eef4fb; outline:none; }
+    .watch-grip:active { cursor:grabbing; }
+    td.watch-grip-cell { width:22px; padding-left:6px; padding-right:0; text-align:center; }
+    th.watch-grip-cell { width:22px; padding-left:6px; padding-right:0; text-align:center; }
+    tr.watch-dragging td { opacity:.45; }
+    /* Where the row will land, drawn on the row you are hovering over. */
+    tr.watch-drop-above td { box-shadow:inset 0 2px 0 var(--accent); }
+    tr.watch-drop-below td { box-shadow:inset 0 -2px 0 var(--accent); }
+    .watch-rm { border:1px solid transparent; background:transparent; color:#c9d3e0; border-radius:var(--radius-sm); width:22px; height:22px; line-height:1; cursor:pointer; }
+    tr:hover .watch-rm { color:#8a97a8; border-color:var(--line); }
+    .watch-rm:hover { border-color:#e6a6a6; color:#8a2020; }
+    td.watch-rm-cell { width:28px; padding-left:0; padding-right:6px; text-align:right; }
+    th.watch-sort { cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }
+    th.watch-sort:hover { background:#e9eef5; color:#33455e; }
+    th.watch-sort.active { color:var(--accent); }
+    .gsc-ctr-legend { margin-top:7px; font-size:.7rem; color:#7d8ba0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; }
+    .gsc-ctr-legend .gsc-ctr { gap:4px; color:#7d8ba0; }
+    th.expl-sort { cursor:pointer; user-select:none; white-space:nowrap; transition:background .12s,color .12s; }
+    th.expl-sort:hover { background:#e9eef5; color:#33455e; }
+    th.expl-sort.active { color:var(--accent); }
+    /* GSC/keyword tables: truncate the long query/URL label instead of letting
+       the table overflow its column and push off the page. */
+    #gscQueriesTable td.left, #gscPagesTable td.left,
+    #gscBrandedTable td.left, #gscTargetTable td.left,
+    .gsc-leaderboard td.left { max-width:0; }
+    #gscQueriesTable td.left > *, #gscPagesTable td.left > *,
+    #gscBrandedTable td.left > *, #gscTargetTable td.left > *,
+    .gsc-leaderboard td.left > * { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }
+    /* Mobile: the compact overview keyword leaderboards must fit the phone
+       viewport. The shared 600px table min-width (fine for the wide GSC-tab
+       tables) otherwise scrolls the Movement column off-screen and crushes the
+       keyword label down to a few characters. Drop the floor, switch to a fixed
+       layout, and pin the three numeric columns so the keyword gets the
+       remaining width and every column stays readable. */
+    @media (max-width:640px) {
+      .gsc-leaderboard { min-width:0; table-layout:fixed; }
+      .gsc-leaderboard th, .gsc-leaderboard td { padding:8px 6px; }
+      .gsc-leaderboard th { font-size:.58rem; }
+      .gsc-leaderboard td { font-size:.8rem; }
+      .gsc-leaderboard td.left { max-width:none; }
+      .gsc-leaderboard th:nth-child(2), .gsc-leaderboard td:nth-child(2) { width:17%; }
+      .gsc-leaderboard th:nth-child(3), .gsc-leaderboard td:nth-child(3) { width:19%; }
+      .gsc-leaderboard th:nth-child(4), .gsc-leaderboard td:nth-child(4) { width:26%; }
+      .gsc-leaderboard .gsc-mv { font-size:.66rem; padding:2px 5px; }
+    }
+    /* Drag-to-resize handle on the label column of the GSC/keyword tables. */
+    th.col-resizable { position:relative; }
+    .col-resizer { position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }
+    .col-resizer::after { content:''; position:absolute; top:18%; right:3px; height:64%; width:2px; border-radius:1px; background:transparent; transition:background .12s; }
+    .col-resizer:hover::after { background:#b9c8dc; }
+    body.col-resizing { cursor:col-resize; user-select:none; }
+    body.col-resizing .col-resizer::after { background:var(--accent); }
+    /* Admin-only controls (shown when the app-shell has .is-admin) */
+    .debug-only { display:none !important; }
+    .is-admin .debug-only { display:inline-block !important; }
+    /* …but an admin-only control that is also tab-scoped (the Branded / Target
+       Edit buttons) still obeys [hidden] when its tab isn't the open one. */
+    .is-admin .debug-only[hidden] { display:none !important; }
+    /* Inline branded/target keyword tag editor (admin only) */
+    .tag-editor { display:none; }
+    .is-admin .tag-editor { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:7px 9px; margin-bottom:10px; border:1px solid var(--line); border-radius:var(--radius-sm); background:#fff; }
+    .tag-editor:focus-within { border-color:#9bbfe6; box-shadow:0 0 0 2px #e2eefb; }
+    .tag-editor-label { width:100%; font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+    .tag-chip { display:inline-flex; align-items:center; gap:6px; background:#eef4fb; color:var(--navy); border-radius:999px; padding:3px 5px 3px 11px; font-size:.8rem; font-weight:650; }
+    .tag-chip button { border:0; background:rgba(10,37,64,.14); color:var(--navy); width:16px; height:16px; border-radius:50%; cursor:pointer; font-size:.72rem; line-height:1; display:flex; align-items:center; justify-content:center; padding:0; }
+    .tag-chip button:hover { background:var(--bad); color:#fff; }
+    .tag-input { border:0; outline:none; font:inherit; font-size:.84rem; padding:4px 2px; min-width:110px; flex:1; background:transparent; color:#102033; }
+    .tag-input::placeholder { color:#9aa7bd; }
+    /* Exclude editor: same layout, red-tinted so it reads as a "subtract"
+       filter distinct from the blue include chips above it. */
+    .is-admin .tag-editor-exclude { margin-top:-4px; }
+    .tag-editor-exclude .tag-chip { background:#fdecec; color:#8a2020; }
+    .tag-editor-exclude .tag-chip button { background:rgba(138,32,32,.16); color:#8a2020; }
+    .tag-editor-exclude:focus-within { border-color:#e6a6a6; box-shadow:0 0 0 2px #fbe2e2; }
+    /* "Edit" toggle in the branded/target headline row: reveals the include /
+       exclude tag editors (admin only, via .debug-only) so they stay tucked
+       away until needed. */
+    .kw-edit-btn { flex-shrink:0; border:1px solid var(--line); background:#fff; color:var(--muted); border-radius:var(--radius-sm); padding:3px 11px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; transition:border-color .12s, color .12s; }
+    .kw-edit-btn:hover { border-color:#9bbfe6; color:var(--navy); }
+    .kw-edit-btn[aria-expanded="true"] { border-color:#9bbfe6; color:var(--navy); background:#eef4fb; }
+    .empty { color:var(--muted); padding:26px; text-align:center; }
+    code { background:#eef4fb; padding:2px 5px; border-radius:4px; font-size:.85em; }
+    .muted { color:var(--muted); font-size:.78rem; margin-left:6px; }
+    /* Cap the path label so a long URL can't balloon the column and shove the
+       metric columns off the horizontal scroller (worst on mobile). Truncates
+       with an ellipsis; the full path stays available via the title tooltip. */
+    .page-path { display:inline-block; max-width:min(52vw,460px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; font-weight:600; color:#1f2d40; cursor:help; }
+    /* Drag-to-resize columns (Pages / Landing Pages tables). */
+    table.resizable { table-layout:fixed; }
+    table.resizable th, table.resizable td { overflow:hidden; text-overflow:ellipsis; }
+    .col-resizer { position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; user-select:none; touch-action:none; }
+    .col-resizer::after { content:""; position:absolute; top:25%; right:4px; width:1px; height:50%; background:transparent; transition:background .12s; }
+    .col-resizer:hover::after { background:var(--accent); }
+    body.col-resizing, body.col-resizing * { cursor:col-resize !important; user-select:none !important; }
+    table.compact { min-width:0; font-size:.84rem; }
+    table.compact th, table.compact td { padding:8px 12px; }
+    /* ---- Pager ---- */
+    .pager { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:12px; }
+    .pager-btn { border:1px solid var(--line); background:#fff; color:var(--navy); border-radius:var(--radius-sm); padding:6px 13px; font:inherit; font-size:.82rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s; }
+    .pager-btn:hover:not(:disabled) { border-color:#b9c8dc; background:#f4f8fd; }
+    .pager-btn:disabled { opacity:.45; cursor:default; }
+    .pager-info { font-size:.8rem; color:var(--muted); font-weight:600; }
+    /* ---- Trend chart ---- */
+    .chart-wrap { position:relative; border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; background:#fafcff; }
+    .chart-note { font-size:.74rem; color:var(--muted); margin-top:8px; }
+    /* Small labelled caption above the keyword avg-position trend charts, with a
+       hover/focus info glyph carrying the "how this chart works" tooltip. */
+    .chart-cap { display:flex; align-items:center; gap:5px; margin:2px 0 8px; font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    .ov-panel .table-wrap + .chart-cap { margin-top:18px; }
+    .info-tip { display:inline-flex; align-items:center; cursor:help; color:#9aa7bd; line-height:0; text-transform:none; }
+    .info-tip svg { display:block; }
+    .info-tip:hover, .info-tip:focus { color:var(--accent); outline:none; }
+    
