@@ -200,7 +200,8 @@ class RenderPageTests(unittest.TestCase):
         for needle in ('id="ep-export"', 'class="ep-range"', 'data-days="90"',
                        'id="ep-kpi-ctor"', 'id="ep-kpi-bounce"',
                        'data-key="ctor"', 'data-key="bounce"',
-                       'id="ep-empty-open"', 'id="ep-add-shown"'):
+                       'id="ep-empty-open"', 'id="ep-add-shown"',
+                       'id="ep-backdrop"'):
             self.assertIn(needle, html, needle)
 
     def test_save_control_is_admin_only(self):

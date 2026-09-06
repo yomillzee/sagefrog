@@ -179,9 +179,21 @@ _EXTRA_CSS = """
 .ep-empty { color:var(--muted); font-size:.86rem; padding:26px 4px; text-align:center; }
 .ep-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
 .ep-empty .ep-btn { margin-left:6px; }
+.ep-backdrop { display:none; }
 @media (max-width: 720px) {
   .ep-head { flex-direction:column; }
   .ep-card-head { align-items:flex-start; }
+  /* The popover hangs off a button that sits near the middle of a phone screen,
+     so anchoring 620px to its right edge pushed most of the list off the left of
+     the viewport. On a phone it becomes a sheet pinned to the bottom of the
+     screen instead, which is where a thumb already is. */
+  .ep-pop { position:fixed; top:auto; right:10px; bottom:10px; left:10px; width:auto; max-width:none;
+    z-index:60; box-shadow:0 -2px 12px rgba(10,37,64,.10), 0 12px 40px rgba(10,37,64,.22); }
+  /* The sheet itself must not scroll -- the list inside it does -- or the search
+     box and the buttons scroll away from under the thumb. */
+  .ep-list { max-height:44vh; }
+  .ep-backdrop { display:block; position:fixed; inset:0; z-index:59; background:rgba(10,37,64,.34); }
+  .ep-backdrop[hidden] { display:none; }
 }
 """
 
@@ -669,18 +681,24 @@ _EP_JS = """
   // outside or Escape closes it; clicks inside don't bubble to the doc handler.
   // Opening moves focus into the search box and closing hands it back to the
   // button, so the whole control works from the keyboard.
-  var pickBtn = document.getElementById('ep-pick-btn');
-  var pop = document.getElementById('ep-pop');
+  var pickBtn  = document.getElementById('ep-pick-btn');
+  var pop      = document.getElementById('ep-pop');
+  var backdrop = document.getElementById('ep-backdrop');
   var setPickerOpen = function () {};
   if (pickBtn && pop) {
-    setPickerOpen = function (o) {
+    // One path in and out, so the phone sheet's scrim can never be left behind
+    // over a page whose picker has already closed.
+    setPickerOpen = function (o, keepFocus) {
       pop.hidden = !o;
+      if (backdrop) backdrop.hidden = !o;
       pickBtn.setAttribute('aria-expanded', o ? 'true' : 'false');
       if (o && searchEl) {
         searchEl.value = '';
         searchEl.dispatchEvent(new Event('input'));
-        searchEl.focus();
-      } else if (!o) {
+        // Focusing the search box raises the phone keyboard over the sheet, so
+        // only reach for it when the pointer isn't the input device.
+        if (window.matchMedia && window.matchMedia('(hover: hover)').matches) searchEl.focus();
+      } else if (!o && !keepFocus) {
         pickBtn.focus();
       }
     };
@@ -688,7 +706,9 @@ _EP_JS = """
     pop.addEventListener('click', function (e) { e.stopPropagation(); });
     var xBtn = pop.querySelector('.ep-pop-x');
     if (xBtn) xBtn.addEventListener('click', function () { setPickerOpen(false); });
-    document.addEventListener('click', function () { if (!pop.hidden) { pop.hidden = true; pickBtn.setAttribute('aria-expanded', 'false'); } });
+    // A tap anywhere outside closes, the scrim included -- but it must not yank
+    // focus back to the button, which would scroll a phone back up the page.
+    document.addEventListener('click', function () { if (!pop.hidden) setPickerOpen(false, true); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !pop.hidden) setPickerOpen(false); });
   }
   var emptyOpen = document.getElementById('ep-empty-open');
@@ -995,6 +1015,7 @@ def render_email_performance(
         'aria-haspopup="dialog" aria-expanded="false">'
         f'{pick_icon}<span>Choose emails</span>'
         '<span class="ep-pick-badge" id="ep-pick-badge" hidden></span></button>'
+        '<div class="ep-backdrop" id="ep-backdrop" hidden></div>'
         '<div class="ep-pop" id="ep-pop" role="dialog" aria-label="Choose emails" hidden>'
         '<div class="ep-pop-head"><span>Choose emails</span>'
         '<button type="button" class="ep-pop-x" aria-label="Close">&times;</button></div>'
