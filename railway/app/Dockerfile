@@ -20,10 +20,15 @@ ENV BROWSER_SCANNER_NO_SANDBOX=1 \
 
 WORKDIR /app
 
-# Install Python deps first so this layer is cached and only rebuilds when
-# requirements.txt changes — the common deploy (app code only) skips it entirely.
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Install Python deps first so this layer is cached and only rebuilds when the
+# lock changes — the common deploy (app code only) skips it entirely.
+#
+# The lock, not requirements.txt: it pins every package and its hashes, so a
+# deploy installs the exact tree that was tested rather than re-resolving to
+# whatever is newest that day. --require-hashes makes a tampered or unpinned
+# entry fail the build instead of silently installing.
+COPY requirements.lock .
+RUN pip install --require-hashes -r requirements.lock
 
 # Application source.
 COPY . .

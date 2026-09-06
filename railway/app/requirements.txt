@@ -1,3 +1,12 @@
+# Direct dependencies, loosely stated. This file is the *input*: edit it to add,
+# drop or re-bound a package, then recompile requirements.lock (the command is
+# in that file's header). Docker and CI install the lock, never this file, so a
+# change here has no effect until it is compiled.
+#
+# A few pins live here rather than only in the lock because they are coupled to
+# something outside Python: psycopg to its binary wheel, and playwright to the
+# Dockerfile's base image tag, which ships the matching browser. Bump those two
+# together.
 fastapi
 uvicorn[standard]
 google-ads
