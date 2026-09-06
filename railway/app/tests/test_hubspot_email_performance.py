@@ -2,19 +2,22 @@
 
 Covers the two ends the feature adds: the sync-side parsing of the
 GET /marketing/v3/emails?includeStats=true payload (hubspot_sync_service) and
-the Email Performance page's rate math over deliveries + display payload
-(email_performance_renderer), including the graceful "no emails" case.
+the Email Performance page's rate math + display payload
+(email_performance_renderer), including which denominator each rate uses, the
+graceful "no emails" case, and that the page's controls actually reach the HTML.
 """
 from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
+import hubspot_reports_service  # noqa: E402
 import hubspot_sync_service as sync  # noqa: E402
 from dashboard.renderers import email_performance_renderer as epr  # noqa: E402
 
@@ -92,6 +95,21 @@ class RateStrTests(unittest.TestCase):
         self.assertEqual(epr._rate_str(5, None), "—")
 
 
+class TypeLabelTests(unittest.TestCase):
+    def test_known_shapes_are_spelled_out(self):
+        self.assertEqual(epr._type_label("BATCH_EMAIL"), "Batch")
+        self.assertEqual(epr._type_label("batch"), "Batch")
+        self.assertEqual(epr._type_label("AUTOMATED_AB_EMAIL"), "A/B")
+        self.assertEqual(epr._type_label("automated"), "Automated")
+
+    def test_unknown_kind_is_tidied_not_dropped(self):
+        self.assertEqual(epr._type_label("SOME_NEW_EMAIL"), "Some New")
+
+    def test_missing_kind_is_blank(self):
+        self.assertEqual(epr._type_label(None), "")
+        self.assertEqual(epr._type_label(""), "")
+
+
 class EmailPayloadTests(unittest.TestCase):
     def _emails(self):
         return [
@@ -113,6 +131,30 @@ class EmailPayloadTests(unittest.TestCase):
         self.assertEqual(p["click"], "5.0%")    # 590/11800
         self.assertEqual(p["unsub"], "0.20%")   # 24/11800 (2dp)
 
+    def test_bounce_rate_is_over_sends_not_deliveries(self):
+        # A bounce is precisely a send that never became a delivery, so the
+        # denominator has to be sends -- over deliveries it would overstate.
+        p = epr._email_payload(self._emails())[0]
+        self.assertEqual(p["bounce"], "1.67%")  # 200/12000, not 200/11800
+
+    def test_click_to_open_is_clicks_over_opens(self):
+        p = epr._email_payload(self._emails())[0]
+        self.assertEqual(p["ctor"], "12.5%")    # 590/4720
+
+    def test_type_reaches_the_payload(self):
+        self.assertEqual(epr._email_payload(self._emails())[0]["type"], "Batch")
+
+    def test_raw_counts_are_carried_for_client_side_aggregation(self):
+        p = epr._email_payload(self._emails())[0]
+        self.assertEqual(p["_sent"], 12000.0)
+        self.assertEqual(p["_opens"], 4720.0)
+        self.assertEqual(p["_bounces"], 200.0)
+
+    def test_click_to_open_survives_zero_opens(self):
+        emails = [{"email_id": "3", "name": "Nobody opened", "delivered": 100,
+                   "sent": 100, "opens": 0, "clicks": 0}]
+        self.assertEqual(epr._email_payload(emails)[0]["ctor"], "—")
+
     def test_payload_survives_zero_deliveries(self):
         emails = [{"email_id": "9", "name": "No sends", "subject": "",
                    "email_type": "ab", "publish_date": None,
@@ -123,10 +165,59 @@ class EmailPayloadTests(unittest.TestCase):
         self.assertEqual(p["open"], "—")
         self.assertEqual(p["click"], "—")
         self.assertEqual(p["unsub"], "—")
+        self.assertEqual(p["ctor"], "—")
+        # 3 sends and 0 bounces is still a real bounce rate, so it is not a dash
+        self.assertEqual(p["bounce"], "0.00%")
 
     def test_untitled_fallback_for_missing_name(self):
         p = epr._email_payload([{"email_id": "7", "delivered": 0}])[0]
         self.assertEqual(p["name"], "Untitled email")
+
+
+class RenderPageTests(unittest.TestCase):
+    """The page is one big f-string of HTML + JS; these assert the controls a
+    user reaches for actually make it into the markup."""
+
+    def _report(self, emails):
+        return hubspot_reports_service.EmailPerformanceReport(
+            configured=True, available=True, emails=emails)
+
+    def _render(self, emails, **kw):
+        return epr.render_email_performance(
+            client_slug="demo", label="Demo Co", report=self._report(emails), **kw)
+
+    def _emails(self, n=3):
+        return [
+            {"email_id": str(i), "name": f"Email {i}", "subject": "Hi",
+             "email_type": "batch", "publish_date": date(2026, 6, i + 1),
+             "sent": 1000, "delivered": 980, "opens": 400,
+             "clicks": 40, "unsubscribed": 2, "bounces": 20}
+            for i in range(1, n + 1)
+        ]
+
+    def test_page_carries_ranges_export_and_the_new_metrics(self):
+        html = self._render(self._emails())
+        for needle in ('id="ep-export"', 'class="ep-range"', 'data-days="90"',
+                       'id="ep-kpi-ctor"', 'id="ep-kpi-bounce"',
+                       'data-key="ctor"', 'data-key="bounce"',
+                       'id="ep-empty-open"', 'id="ep-add-shown"'):
+            self.assertIn(needle, html, needle)
+
+    def test_save_control_is_admin_only(self):
+        self.assertNotIn('id="ep-save"', self._render(self._emails()))
+        self.assertIn('id="ep-save"', self._render(self._emails(), session_is_admin=True))
+
+    def test_unconfigured_and_empty_render_a_note_not_a_table(self):
+        unconfigured = epr.render_email_performance(
+            client_slug="demo", label="Demo Co",
+            report=hubspot_reports_service.EmailPerformanceReport(
+                configured=False, error="HubSpot is not connected."))
+        self.assertIn("HubSpot is not connected.", unconfigured)
+        self.assertNotIn('id="ep-tbody"', unconfigured)
+
+        empty = self._render([])
+        self.assertIn("No marketing email data has synced yet", empty)
+        self.assertNotIn('id="ep-tbody"', empty)
 
 
 if __name__ == "__main__":
