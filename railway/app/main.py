@@ -439,6 +439,9 @@ def _request_wants_html_error(request: Request) -> bool:
 async def custom_http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> HTMLResponse | JSONResponse:
+    # Stays async deliberately: the error pages are built from strings
+    # (not_found_page imports nothing but `html`), so there is no blocking work
+    # here to move off the loop.
     detail = exc.detail
     if not isinstance(detail, str):
         detail = str(detail)
@@ -2238,7 +2241,7 @@ def admin_client_hours_data(
 
 
 @app.post("/admin/client-hours/goal", include_in_schema=False)
-async def admin_client_hours_goal(
+def admin_client_hours_goal(
     request: Request,
     harvest_client_id: str = Form(...),
     goal: str = Form(""),
@@ -2253,7 +2256,7 @@ async def admin_client_hours_goal(
 
     Passing ``harvest_project_id`` writes the goal of a project tracked on its own
     card instead of the client's — the client's own goal is left untouched."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import harvest_service
 
     hard = (hard_ceiling or "").strip().lower() in ("1", "true", "on", "yes")
@@ -2303,7 +2306,7 @@ async def admin_client_hours_goal(
 
 
 @app.post("/admin/client-hours/project-tag", include_in_schema=False)
-async def admin_client_hours_project_tag(
+def admin_client_hours_project_tag(
     request: Request,
     harvest_project_id: str = Form(...),
     tag: str = Form(""),
@@ -2312,7 +2315,7 @@ async def admin_client_hours_project_tag(
 ):
     """Tag one Harvest project as 'retainer' or 'project' (blank clears the tag,
     so it counts only under the 'All' scope)."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import harvest_service
 
     try:
@@ -2337,7 +2340,7 @@ async def admin_client_hours_project_tag(
 
 
 @app.post("/admin/client-hours/project-split", include_in_schema=False)
-async def admin_client_hours_project_split(
+def admin_client_hours_project_split(
     request: Request,
     harvest_project_id: str = Form(...),
     separate: str = Form(""),
@@ -2348,7 +2351,7 @@ async def admin_client_hours_project_split(
     back into its client's aggregate card. Use this when a client runs two distinct
     lines of work — say a main retainer and a separate HR retainer — that shouldn't
     be paced as one combined total. Folding a project back drops its own goal."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import harvest_service
 
     want = (separate or "").strip().lower() in ("1", "true", "on", "yes")
@@ -2374,7 +2377,7 @@ async def admin_client_hours_project_split(
 
 
 @app.post("/admin/client-hours/owner", include_in_schema=False)
-async def admin_client_hours_owner(
+def admin_client_hours_owner(
     request: Request,
     harvest_client_id: str = Form(...),
     owner: str = Form(""),
@@ -2382,7 +2385,7 @@ async def admin_client_hours_owner(
 ):
     """Set one client's account owner (a team member's name), or clear it when
     ``owner`` is blank. The owner is a label/filter on the Client Hours page."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import harvest_service
 
     try:
@@ -2406,14 +2409,14 @@ async def admin_client_hours_owner(
 
 
 @app.post("/admin/client-hours/prefs", include_in_schema=False)
-async def admin_client_hours_prefs(
+def admin_client_hours_prefs(
     request: Request,
     show_billing: str | None = Form(None),
 ):
     """Save one signed-in user's Client Hours view preferences — which optional
     sections they keep open. Only the fields present in the request are changed,
     and the preference is scoped to this user, not the page."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import harvest_service
 
     truthy = ("1", "true", "on", "yes")
@@ -2436,21 +2439,21 @@ async def admin_client_hours_prefs(
 
 
 @app.get("/admin/client-hours/shares", include_in_schema=False)
-async def admin_client_hours_shares(request: Request) -> JSONResponse:
+def admin_client_hours_shares(request: Request) -> JSONResponse:
     """List the active read-only share links for the Client Hours page."""
-    await web_auth.require_admin(request)
+    web_auth.require_admin(request)
     import client_hours_share
 
     return JSONResponse({"ok": True, "links": client_hours_share.list_share_links()})
 
 
 @app.post("/admin/client-hours/share", include_in_schema=False)
-async def admin_client_hours_share_create(
+def admin_client_hours_share_create(
     request: Request,
     label: str = Form(""),
 ) -> JSONResponse:
     """Mint a new read-only share link. Returns the token + its full URL."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import client_hours_share
 
     try:
@@ -2468,12 +2471,12 @@ async def admin_client_hours_share_create(
 
 
 @app.post("/admin/client-hours/share/revoke", include_in_schema=False)
-async def admin_client_hours_share_revoke(
+def admin_client_hours_share_revoke(
     request: Request,
     token: str = Form(...),
 ) -> JSONResponse:
     """Revoke a read-only share link so it can no longer be viewed."""
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     import client_hours_share
 
     try:
@@ -3347,7 +3350,7 @@ def admin_delete_snapshot(
     summary="Start OAuth connect flow (admin)",
     include_in_schema=False,
 )
-async def oauth_connect(platform: str, request: Request, return_to: str = "/admin", client: str = ""):
+def oauth_connect(platform: str, request: Request, return_to: str = "/admin", client: str = ""):
     # Accept hyphen or underscore in the platform segment. Redirect URIs are
     # often registered with hyphens (e.g. /oauth/microsoft-ads/callback) while
     # our platform keys use underscores (microsoft_ads); normalize so Google's
@@ -3355,7 +3358,7 @@ async def oauth_connect(platform: str, request: Request, return_to: str = "/admi
     slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
-    await web_auth.require_admin(request)
+    web_auth.require_admin(request)
     dest = oauth_flows.validate_return_to(return_to)
     prereq = oauth_flows.connect_prerequisites(slug)
     if not prereq.get("ready"):
@@ -3380,7 +3383,7 @@ async def oauth_connect(platform: str, request: Request, return_to: str = "/admi
     summary="No-login connect link (signed) — start OAuth for one client",
     include_in_schema=False,
 )
-async def connect_link(platform: str, client_slug: str, request: Request, t: str = ""):
+def connect_link(platform: str, client_slug: str, request: Request, t: str = ""):
     """Public, signed-token connect link. Lets a specialist/client authorize one
     client's connector (e.g. their HubSpot portal) without a portal login."""
     # Accept hyphen or underscore in the platform segment. Redirect URIs are
@@ -3423,7 +3426,7 @@ async def connect_link(platform: str, client_slug: str, request: Request, t: str
     summary="OAuth provider callback",
     include_in_schema=False,
 )
-async def oauth_callback(
+def oauth_callback(
     platform: str,
     request: Request,
     code: str | None = None,
@@ -3551,14 +3554,14 @@ def _register_microsoft_ads_callback() -> None:
     if len(parts) == 3 and parts[0] == "oauth" and parts[2] == "callback":
         return  # /oauth/<slug>/callback — handled by the generic route
 
-    async def _ms_ads_callback_alias(
+    def _ms_ads_callback_alias(
         request: Request,
         code: str | None = None,
         state: str | None = None,
         error: str | None = None,
         error_description: str | None = None,
     ):
-        return await oauth_callback(
+        return oauth_callback(
             "microsoft_ads",
             request,
             code=code,
@@ -3581,7 +3584,7 @@ _register_microsoft_ads_callback()
     summary="Remove stored OAuth token (admin)",
     include_in_schema=False,
 )
-async def oauth_disconnect(
+def oauth_disconnect(
     platform: str,
     request: Request,
     return_to: str = Form("/admin"),
@@ -3593,7 +3596,7 @@ async def oauth_disconnect(
     slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
-    user = await web_auth.require_admin(request)
+    user = web_auth.require_admin(request)
     oauth_store.delete_platform(slug)
     audit_log.record(
         action="oauth.disconnected",

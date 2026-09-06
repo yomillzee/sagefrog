@@ -17,6 +17,9 @@ def configured_cron_secret() -> str | None:
 
 
 async def require_cron_secret(x_cron_secret: str | None = Security(_cron_header)) -> None:
+    # Stays async deliberately: this does no I/O (an env read and a constant-time
+    # compare), so running it on the event loop is cheaper than the threadpool
+    # hop a sync dependency would cost.
     expected = configured_cron_secret()
     if not expected:
         raise HTTPException(

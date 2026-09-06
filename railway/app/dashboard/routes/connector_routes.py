@@ -326,7 +326,7 @@ def connector_detail(
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard/{client_slug}/connectors/{connector_type}/accounts")
-async def connector_accounts(
+def connector_accounts(
     client_slug: str,
     connector_type: str,
     request: Request,
@@ -472,7 +472,7 @@ async def connector_configure(
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/dashboard/{client_slug}/connectors/{connector_type}/test")
-async def connector_test(
+def connector_test(
     client_slug: str,
     connector_type: str,
     request: Request,
@@ -632,7 +632,7 @@ async def connector_sync_options(
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/dashboard/{client_slug}/connectors/{connector_type}/connect-link")
-async def connector_connect_link(
+def connector_connect_link(
     client_slug: str,
     connector_type: str,
     request: Request,
@@ -658,7 +658,7 @@ async def connector_connect_link(
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/dashboard/{client_slug}/connectors/{connector_type}/sync/{run_id}/cancel")
-async def connector_sync_cancel(
+def connector_sync_cancel(
     client_slug: str,
     connector_type: str,
     run_id: int,
@@ -679,7 +679,7 @@ async def connector_sync_cancel(
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/dashboard/{client_slug}/connectors/{connector_type}/disconnect")
-async def connector_disconnect(
+def connector_disconnect(
     client_slug: str,
     connector_type: str,
     request: Request,

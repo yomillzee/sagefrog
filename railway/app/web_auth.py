@@ -219,15 +219,22 @@ def impersonation_banner_html(request: Request) -> str:
     </div>"""
 
 
-async def require_user(request: Request) -> WebUser:
+def require_user(request: Request) -> WebUser:
+    """Declared sync on purpose.
+
+    It looks up the signed-in account, which is a blocking database read. As an
+    `async def` FastAPI ran it directly on the event loop, so every authenticated
+    request stalled the loop for the duration of that query. Sync dependencies
+    run in a threadpool instead, which is where blocking work belongs.
+    """
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not signed in.")
     return user
 
 
-async def require_admin(request: Request) -> WebUser:
-    user = await require_user(request)
+def require_admin(request: Request) -> WebUser:
+    user = require_user(request)
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
     return user
@@ -259,8 +266,8 @@ def is_super_admin(user: WebUser | None) -> bool:
     )
 
 
-async def require_super_admin(request: Request) -> WebUser:
-    user = await require_admin(request)
+def require_super_admin(request: Request) -> WebUser:
+    user = require_admin(request)
     if not is_super_admin(user):
         raise HTTPException(status_code=403, detail="Super admin access required.")
     return user
@@ -269,8 +276,8 @@ async def require_super_admin(request: Request) -> WebUser:
 def require_client_access(client_slug: str):
     slug = client_slug.strip().lower()
 
-    async def _dep(request: Request) -> WebUser:
-        user = await require_user(request)
+    def _dep(request: Request) -> WebUser:
+        user = require_user(request)
         if not user.can_access_client(slug):
             raise HTTPException(status_code=403, detail=f"No access to client '{slug}'.")
         return user
