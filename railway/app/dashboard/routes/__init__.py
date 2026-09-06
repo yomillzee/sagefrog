@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from dashboard.routes.accessibility_routes import router as accessibility_router
 from dashboard.routes.annotations_routes import router as annotations_router
 from dashboard.routes.api_routes import router as api_router
+from dashboard.routes.asset_routes import router as asset_router
 from dashboard.routes.connector_routes import router as connector_router
 from dashboard.routes.core_routes import router as core_router
 from dashboard.routes.files_routes import router as files_router
@@ -18,6 +19,7 @@ from dashboard.routes.web_mentions_routes import router as web_mentions_router
 
 def register_dashboard_routes(app: FastAPI) -> None:
     """Attach all /dashboard/* and related internal sync routes to the app."""
+    app.include_router(asset_router)
     app.include_router(api_router)
     app.include_router(settings_router)
     app.include_router(connector_router)

@@ -130,9 +130,7 @@ class GscOverviewPanelGatingTests(unittest.TestCase):
     def _render(self, configs, client_slug: str = "acme") -> str:
         import connector_config_store as ccs
         ccs.list_configs = lambda slug: configs
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
         return render_bigquery_dashboard_page(
             client_slug=client_slug, api_client_key=client_slug, label="Acme",
             use_session=True, session_email="t@e.com",

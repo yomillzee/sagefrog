@@ -545,9 +545,7 @@ class PanelRenderTests(unittest.TestCase):
         cdc.get_theme = self._orig_theme
 
     def _html(self) -> str:
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
         return render_bigquery_dashboard_page(
             client_slug="test", api_client_key="test", label="Test Co",
             use_session=True, session_email="t@e.com",

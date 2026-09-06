@@ -22,9 +22,10 @@ if str(APP_DIR) not in sys.path:
 
 import bq_gsc_service  # noqa: E402
 import demo_data  # noqa: E402
+from dashboard.assets import dashboard_css  # noqa: E402
+from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
     parse_gsc_watchlist,
-    render_bigquery_dashboard_page,
 )
 
 
@@ -202,9 +203,10 @@ class WatchlistRenderTests(unittest.TestCase):
         """`hidden` is what opens and closes the popover. An author `display`
         rule outranks the attribute, which is how the first version of this box
         ended up permanently open for admins."""
-        rule = self.html.split(".watch-pop {", 1)[1].split("}", 1)[0]
+        css = dashboard_css()[1]
+        rule = css.split(".watch-pop {", 1)[1].split("}", 1)[0]
         self.assertNotIn("display", rule)
-        self.assertNotIn(".is-admin .watch-bulk {", self.html)
+        self.assertNotIn(".is-admin .watch-bulk {", css)
 
     def test_adding_a_keyword_is_the_primary_action(self):
         self.assertRegex(

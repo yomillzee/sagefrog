@@ -16,9 +16,7 @@ if str(APP_DIR) not in sys.path:
 import google_ads_service  # noqa: E402
 import marketing_service  # noqa: E402
 import meta_service  # noqa: E402
-from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
-    render_bigquery_dashboard_page,
-)
+from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
 # The Campaign Explorer's `Conv.` column is each platform's own pre-summed
 # conversion count. A selector in its header narrows it to ONE conversion action
@@ -223,7 +221,9 @@ class RendererWiringTests(unittest.TestCase):
     def test_selector_is_navy_not_gold(self):
         # The gold accent means "this number came from GA4". A second gold
         # selector on a platform-reported column would erase that distinction.
-        self.assertIn("#explorerTable th .cv-select", self.html)
+        from dashboard.assets import dashboard_css
+
+        self.assertIn("#explorerTable th .cv-select", dashboard_css()[1])
         self.assertIn('class="cv-select"', self.html)
 
     def test_all_three_breakdowns_are_fetched_with_the_explorer(self):

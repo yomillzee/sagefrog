@@ -1,0 +1,43 @@
+
+    .chart-tip { position:absolute; pointer-events:none; background:#0b1020; color:#e8eefc; font-size:.74rem; line-height:1.5; padding:7px 9px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.25); transform:translate(-50%,-112%); white-space:nowrap; z-index:5; }
+    /* ---- Bar lists ---- */
+    .bar-row { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }
+    .bar-row:last-child { border-bottom:0; }
+    .bar-label { flex:0 0 160px; font-size:.84rem; color:var(--navy); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .bar-track { flex:1 1 auto; height:7px; background:var(--line-soft); border-radius:4px; overflow:hidden; }
+    .bar-fill { height:100%; background:var(--accent); border-radius:4px; transition:width .3s; }
+    .bar-count { flex:0 0 100px; font-size:.82rem; color:var(--navy); text-align:right; font-variant-numeric:tabular-nums; }
+    .bar-pct { color:var(--muted); font-size:.74rem; margin-left:4px; }
+    /* Keyword Performance: toolbar, match badges and in-cell bars. */
+    .kw-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:14px; }
+    .kw-search { border:1px solid var(--line); border-radius:var(--radius-sm); padding:7px 12px; font:inherit; font-size:.84rem; color:#102033; min-width:230px; background:#fff; }
+    .kw-search:focus { outline:none; border-color:var(--accent); }
+    .kw-search::placeholder { color:#9aa7bd; }
+    .kw-name { font-weight:650; color:var(--navy); }
+    .kw-sub { color:var(--muted); font-size:.73rem; margin-top:1px; }
+    .badge-match { display:inline-block; padding:2px 9px; border-radius:999px; font-size:.66rem; font-weight:800; letter-spacing:.02em; white-space:nowrap; }
+    .badge-exact { background:#e4f4ea; color:#0a7f3f; }
+    .badge-phrase { background:#e8f0fe; color:#1a73e8; }
+    .badge-broad { background:#eef2f7; color:#54637a; }
+    .cell-bar { display:flex; align-items:center; justify-content:flex-end; gap:9px; }
+    .cell-bar .bar-track { flex:0 0 auto; width:74px; height:6px; }
+    .cell-bar-val { font-variant-numeric:tabular-nums; }
+    .num-good { color:var(--ok); font-weight:650; }
+    .num-bad { color:var(--bad); }
+    .cell-flag { color:#d9a400; margin-left:6px; }
+    /* ---- Layout cols ---- */
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+    /* Grid items must be allowed to shrink below their content, or a wide table
+       (long GSC page URLs) forces the column past the viewport. */
+    .two-col > * { min-width:0; }
+    .three-col { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-top:14px; }
+    .col-panel { border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:14px 15px; background:#fafcff; }
+    .col-panel h3 { margin:0 0 12px; font-size:.86rem; font-weight:750; color:var(--navy); }
+    .subsec-h3 { margin:16px 0 10px; font-size:.86rem; font-weight:750; color:var(--navy); }
+    .trend-sm-svg { width:100%; height:130px; display:block; }
+    .trend-md-svg { width:100%; height:200px; display:block; }
+    /* Chart.js canvas host: a relatively-positioned box of fixed height that
+       the canvas fills (charts run with maintainAspectRatio:false). */
+    .chart-canvas-host { position:relative; width:100%; }
+    .chart-canvas-host canvas { display:block; }
+    

@@ -76,9 +76,7 @@ class OverviewLoaderIsolationTests(unittest.TestCase):
             ga4_key_events=None, explorer_filters=None,
             monthly_budget_usd=None, overview_pinned_card=None, card_layouts={},
         )
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
         return render_bigquery_dashboard_page(
             client_slug="test", api_client_key="test", label="Test Co",
             use_session=True,

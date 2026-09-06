@@ -146,9 +146,7 @@ class FetchSessionDurationTests(unittest.TestCase):
 
 class RendererCardTests(unittest.TestCase):
     def test_card_leads_the_analytics_pane(self) -> None:
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
         html = render_bigquery_dashboard_page(
             client_slug="demo", api_client_key="demo", label="Demo",
@@ -221,9 +219,7 @@ class RendererCardTests(unittest.TestCase):
         this card, driven by the same code against the same endpoint, so the
         home page and the tab can't disagree.
         """
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
         html = render_bigquery_dashboard_page(
             client_slug="demo", api_client_key="demo", label="Demo",

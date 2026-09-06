@@ -1,0 +1,293 @@
+
+    /* Sessions-over-time current-vs-previous legend */
+    .cmp-legend { display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; font-size:.78rem; color:var(--muted); }
+    .cmp-item { display:inline-flex; align-items:center; gap:7px; }
+    .cmp-swatch { width:16px; height:0; border-top-width:3px; border-top-style:solid; border-radius:2px; }
+    .cmp-swatch.cur { border-top-color:#1d6fd0; }
+    .cmp-swatch.prev { border-top-color:#9aa7bd; border-top-style:dashed; }
+    .cmp-delta { font-weight:800; }
+    .cmp-delta.up { color:var(--ok); }
+    .cmp-delta.down { color:var(--bad); }
+    /* ---- Funnel ---- */
+    .funnel-bar { display:flex; flex-direction:column; gap:8px; }
+    .funnel-step { display:flex; align-items:center; gap:12px; }
+    .funnel-step-label { flex:0 0 110px; font-size:.82rem; color:var(--navy); font-weight:600; }
+    .funnel-step-track { flex:1 1 auto; height:22px; background:var(--line-soft); border-radius:6px; overflow:hidden; }
+    .funnel-step-fill { height:100%; background:var(--accent); border-radius:6px; display:flex; align-items:center; padding-left:10px; font-size:.76rem; color:#fff; font-weight:700; min-width:2px; }
+    .funnel-step-count { flex:0 0 56px; font-size:.82rem; color:var(--navy); text-align:right; font-weight:700; }
+    /* ---- Explorer tree ----
+       Three levels deep, so depth has to survive both a collapsed campaign and
+       a screenful of expanded ad groups. Four cues stack, and no single one
+       carries the whole job: a wider indent per level, a type scale that gets
+       smaller and quieter going down, a coloured rail down the left of every
+       nested row, and a hairline above each campaign to separate one block from
+       the next. */
+    .indent1 { display:inline-block; width:24px; }
+    .indent2 { display:inline-block; width:48px; }
+    .tree-row[data-expandable] { cursor:pointer; }
+    .tree-row[data-expandable]:hover { background:#f3f8ff; }
+    /* Modern chevron caret: a rounded hover target whose chevron rotates on open. */
+    .caret { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:6px; color:var(--muted); vertical-align:middle; transition:transform .18s ease, background .12s, color .12s; }
+    .tree-row[data-expandable] .caret::before { content:''; width:5px; height:5px; border-top:1.7px solid currentColor; border-right:1.7px solid currentColor; transform:translateX(-1px) rotate(45deg); }
+    .tree-row[data-expandable].open .caret { transform:rotate(90deg); }
+    .tree-row[data-expandable]:hover .caret { background:rgba(29,111,208,.12); color:var(--accent); }
+    /* Level 1 -- campaign: the block heading. Largest, darkest, and opened by a
+       rule above it so a long tree reads as campaigns rather than as one list. */
+    /* Only a campaign that follows a nested row needs the separator -- in the
+       default all-collapsed view every row is a campaign, and a rule between
+       each of them would just be a heavier grid. border-collapse means this
+       replaces the previous row's hairline rather than adding to it, so it has
+       to be wider than 1px to read as a break at all. */
+    .tree-row:not(.lvl-campaign) + .lvl-campaign > td { border-top:2px solid var(--line); }
+    .lvl-campaign .tree-name { font-weight:800; font-size:.85rem; color:var(--navy); letter-spacing:-.01em; }
+    /* Level 2 -- ad group: a step down in size and weight, with an accent rail
+       marking it as one level in. */
+    .lvl-group .tree-name { font-weight:700; font-size:.78rem; color:#42536b; }
+    .lvl-group > td.left { box-shadow:inset 3px 0 0 rgba(29,111,208,.28); }
+    /* Level 3 -- ad: the quietest row on the page, on a grey rail. */
+    .lvl-ad > td { font-size:.74rem; }
+    .lvl-ad > td.left { color:var(--muted); box-shadow:inset 3px 0 0 rgba(107,122,144,.22); }
+    /* Sleek count indicator: dots representing the child count + a numeric badge. */
+    .tree-count { display:inline-flex; align-items:center; gap:6px; margin-left:11px; vertical-align:middle; }
+    .tree-count .tc-dots { display:inline-flex; align-items:center; gap:3px; }
+    .tree-count .tc-dot { width:5px; height:5px; border-radius:50%; background:rgba(29,111,208,.55); }
+    .tree-count .tc-dot.tc-more { background:none; width:auto; height:auto; font-size:.62rem; font-weight:800; line-height:1; color:rgba(29,111,208,.65); letter-spacing:-.02em; }
+    .lvl-group .tree-count .tc-dot { background:rgba(107,122,144,.5); }
+    .lvl-group .tree-count .tc-dot.tc-more { color:rgba(107,122,144,.7); }
+    /* Grand-total footer row — reads as a summary rail under the tree, not as
+       another campaign: heavier type, a rule above it and no hover state. */
+    #explorerTable tfoot td { background:#eef3fa; border-top:2px solid var(--line); border-bottom:0; font-weight:800; color:var(--navy); font-variant-numeric:tabular-nums; }
+    #explorerTable tfoot td.ga4-col { background:rgba(184,146,46,0.13); }
+    #explorerTable tfoot .tree-name { font-weight:800; text-transform:uppercase; font-size:.7rem; letter-spacing:.06em; color:#5a6b82; }
+    #explorerTable tfoot .tot-sub { margin-left:9px; font-weight:600; font-size:.72rem; color:var(--muted); }
+    /* "vs previous" delta under a metric figure, shown once the Compare picker
+       has a window selected -- on campaign rows and the grand total alike.
+       Kept out-of-flow of the bold total figure above it. */
+    /* A row delta is a footnote to the figure above it, never a competitor:
+       small, light, and grey unless the movement earned a colour (see
+       MEANINGFUL_DELTA_PCT). With one under every metric on every row, this
+       type scale is what keeps an expanded tree readable. */
+    #explorerTable .expl-row-delta { margin-top:1px; font-weight:600; line-height:1.2; }
+    #explorerTable .expl-row-delta .cmp-delta { font-size:.62rem; font-weight:600; letter-spacing:-.01em; }
+    #explorerTable .expl-row-delta .cmp-delta.flat { color:#9aa7bd; }
+    /* The grand total is the one place a delta may speak up -- it is a single
+       figure, not one of fifty. */
+    #explorerTable tfoot .expl-row-delta .cmp-delta { font-size:.66rem; font-weight:700; }
+    /* GA4-verified conversions column — set off from the platform-reported metrics with a subtle gold accent. */
+    #explorerTable th.ga4-col, #explorerTable td.ga4-col { background:rgba(184,146,46,0.06); border-left:1px solid rgba(184,146,46,0.3); }
+    #explorerTable td.ga4-col { font-variant-numeric:tabular-nums; }
+    #explorerTable th.ga4-col { color:#8a6d1f; vertical-align:top; }
+    /* Two-line header: GA4 badge + label + sort arrow on top, filter select below. */
+    .ga4-head { display:inline-flex; flex-direction:column; align-items:flex-end; gap:6px; }
+    .ga4-head-top { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+    .ga4-badge { font-size:.55rem; font-weight:800; letter-spacing:.05em; color:#8a6d1f; background:rgba(184,146,46,0.16); border-radius:4px; padding:1px 5px; line-height:1.45; }
+    .ga4-head-label { text-transform:uppercase; letter-spacing:.05em; }
+    /* Modernized key-event filter control (pill select with leading funnel icon + custom caret). */
+    .ke-select-wrap { position:relative; display:inline-flex; align-items:center; }
+    .ke-select-ico { position:absolute; left:8px; width:11px; height:11px; color:#a98b3a; pointer-events:none; }
+    .ke-select-caret { position:absolute; right:8px; font-size:.62rem; color:#a98b3a; pointer-events:none; }
+    #explorerTable th.ga4-col .ke-select { -webkit-appearance:none; appearance:none; max-width:158px; font-size:.68rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--navy); background:#fff; border:1px solid rgba(184,146,46,0.42); border-radius:999px; padding:3px 22px 3px 23px; cursor:pointer; text-overflow:ellipsis; transition:border-color .12s, background .12s, box-shadow .12s; }
+    #explorerTable th.ga4-col .ke-select:hover { border-color:#c79a2e; }
+    #explorerTable th.ga4-col .ke-select:focus-visible { outline:none; border-color:#b8922e; box-shadow:0 0 0 2px rgba(184,146,46,0.2); }
+    /* Active state: a specific key event is isolated, so the control reads as a live filter. */
+    #explorerTable th .ke-select-wrap.active .ke-select { background:rgba(184,146,46,0.13); border-color:#b8922e; color:#755a11; font-weight:700; }
+    .ke-select-wrap.active .ke-select-ico, .ke-select-wrap.active .ke-select-caret { color:#8a6d1f; }
+    /* Campaign explorer: the platform-conversion selector on the Conv. column.
+       Same control as the GA4 key-event picker beside it, but in the neutral
+       navy -- the gold accent has to keep meaning "this number came from GA4,
+       not from the ad platform", and two gold selectors would erase that. */
+    #explorerTable th .cv-select { -webkit-appearance:none; appearance:none; max-width:158px; font-size:.68rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--navy); background:#fff; border:1px solid var(--line); border-radius:999px; padding:3px 22px 3px 23px; cursor:pointer; text-overflow:ellipsis; transition:border-color .12s, background .12s, box-shadow .12s; }
+    #explorerTable th .cv-select:hover { border-color:#8fa3bd; }
+    #explorerTable th .cv-select:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(20,54,99,0.15); }
+    .ke-select-wrap.cv .ke-select-ico, .ke-select-wrap.cv .ke-select-caret { color:#7a8ba3; }
+    #explorerTable th .ke-select-wrap.cv.active .cv-select { background:#eef3fa; border-color:var(--accent); color:var(--navy); font-weight:700; }
+    .ke-select-wrap.cv.active .ke-select-ico, .ke-select-wrap.cv.active .ke-select-caret { color:var(--accent); }
+    .cv-head { display:inline-flex; flex-direction:column; align-items:flex-end; gap:6px; }
+    .cv-head-top { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+    .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:.64rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; margin-right:7px; }
+    .pill-google { background:#e8f0fe; color:#1a73e8; }
+    .pill-linkedin { background:#e6f0f8; color:#0a66c2; }
+    /* Keyword Performance: the window badge that spells out which date range
+       (and which explorer filters) produced the rows below, so a table that
+       looks unchanged between two ranges is visibly a data fact, not a bug. */
+    .kw-window { display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#1d6fd0; background:#eaf1fb; border-radius:999px; padding:4px 11px; white-space:nowrap; }
+    .kw-window[hidden] { display:none; }
+    /* LinkedIn audience panel: tab strip, window badge, share-of-reach bars. */
+    .lid-tabs { margin:2px 0 14px; border-bottom:1px solid var(--line); }
+    .lid-window { display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#0a66c2; background:#e6f0f8; border-radius:999px; padding:4px 11px; white-space:nowrap; }
+    .lid-note { margin:12px 2px 0; font-size:.72rem; line-height:1.5; color:var(--muted); }
+    .lid-export { border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:var(--radius-sm); padding:4px 10px; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; white-space:nowrap; }
+    .lid-export:hover { border-color:#c9d6e6; color:var(--navy); }
+    /* "Show all N" accordion under a table that renders its top rows only. It
+       sits outside .table-wrap so it stays put while the table scrolls. */
+    .tbl-more { display:flex; justify-content:center; margin-top:10px; }
+    .tbl-more:empty { display:none; }
+    .tbl-more-btn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); background:var(--card); color:var(--muted); border-radius:999px; padding:5px 14px; font:inherit; font-size:.75rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s, color .12s; }
+    .tbl-more-btn:hover { border-color:#b9c8dc; background:#f4f8fd; color:var(--navy); }
+    .tbl-more-caret { font-size:.62rem; line-height:1; }
+    #lidemoTable td.lid-cat { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .lid-bar { position:relative; display:block; height:6px; min-width:120px; border-radius:3px; background:rgba(10,102,194,.13); }
+    .lid-bar span { position:absolute; inset:0 auto 0 0; border-radius:3px; background:#0a66c2; }
+    #lidemoTable td.lid-share { width:150px; }
+    /* Google Ads demographics: dimension tabs, recommendation cards, the
+       spend-vs-conversion share bars and the already-excluded badge. */
+    .gd-tabs { margin:2px 0 14px; border-bottom:1px solid var(--line); }
+    .gd-coverage { display:inline-flex; align-items:center; gap:6px; font-size:.72rem; font-weight:700; color:#8a5a00; background:#fdf3e2; border-radius:999px; padding:4px 11px; white-space:nowrap; }
+    .gd-coverage[hidden] { display:none; }
+    .gd-note { margin:12px 2px 0; font-size:.72rem; line-height:1.5; color:var(--muted); }
+    .gd-recs { display:grid; gap:8px; margin:0 0 14px; }
+    .gd-recs[hidden] { display:none; }
+    .gd-rec { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--line); border-left-width:3px; border-radius:8px; padding:10px 13px; background:var(--card); }
+    .gd-rec-high { border-left-color:#c0392b; }
+    .gd-rec-medium { border-left-color:#b8922e; }
+    .gd-rec-body { min-width:0; }
+    .gd-rec-head { font-size:.82rem; font-weight:750; color:var(--navy); }
+    .gd-rec-detail { margin-top:2px; font-size:.74rem; line-height:1.5; color:var(--muted); }
+    #gdemoTable td.gd-seg { max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* Two bars on one baseline: spend share above, conversion share below. A
+       segment taking more spend than it returns reads as a top-heavy pair. */
+    .gd-split { display:block; min-width:120px; }
+    .gd-split-row { position:relative; display:block; height:5px; border-radius:3px; background:rgba(26,115,232,.12); }
+    .gd-split-row + .gd-split-row { margin-top:3px; background:rgba(31,138,86,.12); }
+    .gd-split-row span { position:absolute; inset:0 auto 0 0; border-radius:3px; background:#1a73e8; }
+    .gd-split-row + .gd-split-row span { background:#1f8a56; }
+    #gdemoTable td.gd-shares { width:150px; }
+    .gd-flag { display:inline-block; margin-left:7px; padding:1px 7px; border-radius:999px; font-size:.62rem; font-weight:800; letter-spacing:.03em; text-transform:uppercase; vertical-align:middle; }
+    .gd-flag-excluded { background:var(--line-soft); color:var(--muted); }
+    .gd-flag-waste { background:#fdecea; color:#c0392b; }
+    .gd-flag-cpa { background:#fdf3e2; color:#8a5a00; }
+    .pill-meta { background:#f0e8fe; color:#7b2ff7; }
+    /* Platform brand icons (campaign rows) */
+    .plat-ico { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-right:9px; vertical-align:middle; flex:0 0 auto; }
+    .plat-ico svg { width:18px; height:18px; display:block; }
+    .ad-cell { display:inline-flex; align-items:center; gap:9px; vertical-align:middle; }
+    .ad-thumb { width:34px; height:34px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#f0f3f8; flex:0 0 auto; cursor:zoom-in; }
+    .creative-preview { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }
+    .creative-preview[hidden] { display:none; }
+    .creative-preview-backdrop { position:absolute; inset:0; background:rgba(10,20,35,.72); }
+    .creative-preview-dialog { position:relative; max-width:min(90vw,760px); max-height:88vh; background:#fff; border-radius:12px; padding:14px; box-shadow:0 20px 60px rgba(0,0,0,.35); display:flex; }
+    .creative-preview-body { display:flex; align-items:center; justify-content:center; max-width:100%; max-height:calc(88vh - 28px); }
+    .creative-preview-body img, .creative-preview-body video { max-width:100%; max-height:calc(88vh - 28px); border-radius:6px; display:block; }
+    .creative-preview-close { position:absolute; top:-14px; right:-14px; width:32px; height:32px; border-radius:50%; border:0; background:#0a2540; color:#fff; font-size:1.1rem; line-height:1; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.25); }
+    .ad-meta { display:flex; flex-direction:column; line-height:1.25; }
+    .ad-label { font-weight:600; color:#1f2d40; }
+    .ad-id { margin-left:6px; font-family:monospace; font-size:.68rem; font-weight:400; color:var(--muted); }
+    .ad-type { font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+    /* Ad-row asset list — each headline/description on its own line with a small
+       tinted chip tag (blue for headlines, slate for descriptions). */
+    .ad-copy { display:flex; flex-direction:column; gap:3px; margin-top:5px; }
+    .ad-copy-line { display:flex; align-items:baseline; gap:7px; font-size:.78rem; color:#43536b; line-height:1.4; white-space:normal; }
+    .ad-copy-tag { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; min-width:24px; padding:1px 6px; border-radius:5px; background:#eef2f8; color:#7688a2; font-weight:800; font-size:.6rem; letter-spacing:.03em; text-transform:uppercase; }
+    .ad-copy-tag.ad-copy-tag--h { background:rgba(29,111,208,.1); color:#1d6fd0; }
+    .ad-copy-tag.ad-copy-tag--d { background:rgba(107,122,144,.12); color:#5a6b82; }
+    .ad-copy-more { align-self:flex-start; margin:4px 0 1px; padding:2px 10px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--accent, #2563eb); font-size:.7rem; font-weight:700; cursor:pointer; transition:background .12s, border-color .12s; }
+    .ad-copy-more:hover { background:#f3f8ff; border-color:var(--accent); }
+    .ad-copy-extra { display:flex; flex-direction:column; gap:3px; margin-top:3px; }
+    .ad-copy-extra[hidden] { display:none; }
+    /* Google search-ad preview — mimics a real SERP ad so the row reads like the
+       live creative. White card + Google colours regardless of dashboard theme. */
+    .ad-cell.gads { align-items:flex-start; }
+    .gads-preview { max-width:540px; padding:9px 12px; border:1px solid #e6e9ef; border-radius:9px; background:#fff; box-shadow:0 1px 2px rgba(16,33,67,.05); }
+    .gads-top { display:flex; align-items:center; gap:8px; margin-bottom:3px; }
+    .gads-badge { font-size:.62rem; font-weight:800; color:#202124; border:1px solid #202124; border-radius:4px; padding:0 4px; line-height:1.35; }
+    .gads-url { font-size:.74rem; color:#202124; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .gads-shuffle { margin-left:auto; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #dadce0; border-radius:999px; background:#fff; color:#1a73e8; cursor:pointer; flex:0 0 auto; transition:background .12s, transform .12s; }
+    .gads-shuffle svg { width:13px; height:13px; }
+    .gads-shuffle:hover { background:#f1f6ff; border-color:#a9c7f5; }
+    .gads-shuffle:active { transform:rotate(-90deg); }
+    /* white-space:normal overrides the table's `th,td{white-space:nowrap}` — without
+       it the headline/description text runs on one line and overflows the card
+       across the metric columns. */
+    .gads-title { color:#1a0dab; font-size:1rem; font-weight:400; line-height:1.3; white-space:normal; overflow-wrap:anywhere; }
+    .gads-desc { color:#4d5156; font-size:.8rem; line-height:1.35; margin-top:2px; white-space:normal; overflow-wrap:anywhere; }
+    .ad-label-sub { margin-top:4px; }
+    .ad-cell.gads .ad-copy-more { margin-left:2px; margin-top:5px; }
+    .ad-cell.gads .ad-copy-extra { margin-left:2px; margin-top:3px; }
+    /* ---- Pages search ---- */
+    .page-search { width:100%; border:1px solid var(--line); border-radius:var(--radius-sm); padding:8px 12px; font:inherit; font-size:.88rem; background:#fff; color:#102033; margin-bottom:10px; }
+    .page-search:focus-visible { outline:2px solid #bcd4f0; outline-offset:1px; border-color:#9bbfe6; }
+    /* ---- New vs returning ---- */
+    .nr-wrap { display:flex; align-items:center; gap:20px; padding:12px 14px; border:1px solid var(--line-soft); border-radius:var(--radius-sm); background:#f9fbff; margin-bottom:14px; flex-wrap:wrap; }
+    .nr-stat { display:flex; flex-direction:column; gap:2px; min-width:80px; }
+    .nr-stat-label { font-size:.67rem; text-transform:uppercase; letter-spacing:.05em; font-weight:800; color:var(--muted); }
+    .nr-stat-value { font-size:1.2rem; font-weight:800; color:var(--navy); line-height:1.1; }
+    .nr-stat-pct { font-size:.74rem; color:var(--muted); }
+    .nr-bar-wrap { flex:1 1 180px; }
+    .nr-bar { height:10px; border-radius:5px; overflow:hidden; display:flex; }
+    .nr-bar-new { background:#1d6fd0; height:100%; transition:width .3s; }
+    .nr-bar-ret { background:#c3d9f5; height:100%; transition:width .3s; }
+    .nr-legend { display:flex; gap:14px; margin-top:5px; }
+    .nr-legend-item { display:flex; align-items:center; gap:5px; font-size:.74rem; color:var(--muted); }
+    .nr-legend-swatch { width:10px; height:10px; border-radius:2px; }
+    /* ---- Traffic: single 100% channel bar (hover for per-segment label) ---- */
+    .stack-wrap { position:relative; }
+    .stack-bar { display:flex; width:100%; height:26px; border-radius:6px; overflow:hidden; background:var(--line-soft); }
+    .stack-seg { height:100%; min-width:2px; cursor:default; transition:filter .12s; }
+    .stack-seg:hover { filter:brightness(1.08); }
+    .stack-tip { position:absolute; bottom:calc(100% + 7px); transform:translateX(-50%); background:var(--navy); color:#fff; font-size:.74rem; font-weight:700; padding:5px 9px; border-radius:6px; white-space:nowrap; pointer-events:none; box-shadow:var(--shadow); z-index:5; }
+    .stack-tip[hidden] { display:none; }
+    /* ---- Demographics: age toggle, gender split, state tile map ---- */
+    .col-panel-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:12px; }
+    .col-panel-head h3 { margin:0; }
+    .age-toggle { display:inline-flex; align-items:center; gap:5px; font-size:.74rem; font-weight:600; color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }
+    .age-toggle input { accent-color:var(--accent); cursor:pointer; }
+    .gender-wrap { display:flex; flex-direction:column; gap:14px; }
+    .gender-bar { display:flex; width:100%; height:30px; border-radius:8px; overflow:hidden; background:var(--line-soft); }
+    .gender-seg { height:100%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:.8rem; font-weight:800; min-width:2px; }
+    .gender-stats { display:flex; gap:12px; }
+    .gender-stat { flex:1 1 0; border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:10px 12px; display:flex; align-items:center; gap:10px; }
+    .gender-dot { width:12px; height:12px; border-radius:50%; flex:0 0 auto; }
+    .gender-stat-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; font-weight:800; color:var(--muted); }
+    .gender-stat-value { font-size:1.1rem; font-weight:800; color:var(--navy); line-height:1.1; }
+    .gender-stat-pct { font-size:.74rem; color:var(--muted); }
+    .geo-map { width:100%; }
+    .geo-map svg { width:100%; height:auto; display:block; }
+    .state-tile { transition:filter .12s; }
+    .state-tile:hover { filter:brightness(.92); }
+    .state-tile-label { font-size:8px; font-weight:700; fill:#5a6b82; pointer-events:none; }
+    /* Country choropleth (Users-by-country map): real border paths, so hover
+       needs a stroke to read against neighbours instead of a tile gap. */
+    .country { stroke:#fff; stroke-width:.6; transition:filter .12s, stroke-width .12s; }
+    .country:hover { filter:brightness(.9); stroke-width:1.1; }
+    /* Dot markers for city-states with no fillable shape at this scale (e.g.
+       Singapore, Hong Kong) -- see COUNTRY_MARKERS. */
+    .territory-dot { fill:#0a2540; fill-opacity:.82; stroke:#fff; stroke-width:1.4; transition:fill-opacity .12s; }
+    .territory-dot:hover { fill-opacity:1; }
+    .geo-map-scale { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:.72rem; color:var(--muted); }
+    .geo-map-scale-bar { flex:1 1 auto; height:8px; border-radius:4px; background:linear-gradient(90deg,#eaf1fb,#1d6fd0); }
+    .geo-map-note { margin-top:8px; font-size:.72rem; color:var(--muted); line-height:1.5; }
+    /* Sticky date bar clears the fixed 52px mobile top bar (see SIDEBAR_CSS). */
+    @media (max-width:900px) { .cards { grid-template-columns:repeat(2,minmax(120px,1fr)); } .two-col,.three-col { grid-template-columns:1fr; } .date-bar { top:52px; } }
+    /* On phones give the metric columns more room: tighten the path label cap. */
+    @media (max-width:640px) { .page-path { max-width:44vw; } }
+    /* ---- Phone layout for the filters ----
+       Range and Compare share one line: each picker gives up its desktop
+       min-width, splits the row evenly and ellipsises its own label rather
+       than pushing the row wide. A third picker (Events on Website analytics,
+       the Explorer bar) wraps to a second line instead of squeezing these two.
+       The Compare panel is right-anchored so it can't hang off the screen. */
+    @media (max-width:640px) {
+      /* Bar and content share one padding so the pickers line up with the
+         cards below them. */
+      .date-bar-inner { padding:11px 16px; }
+      main { padding:16px 16px 44px; }
+      /* A long money value ($17,428.47) overflowed a half-width card at this
+         size; scale the figure with the viewport instead of clipping it. */
+      .card-value { font-size:clamp(1.05rem, 4.6vw, 1.5rem); }
+      .date-bar-bottom { gap:8px; }
+      .date-bar-bottom > .filter-group { flex:1 1 auto; min-width:0; }
+      .date-bar-bottom > #explorerFilterBar { flex:1 1 100%; }
+      .date-bar-bottom .range-dd { display:block; min-width:0; }
+      .date-bar-bottom .range-dd-toggle { width:100%; min-width:0; padding:6px 10px; font-size:.79rem; }
+      .range-dd-panel { width:min(220px, calc(100vw - 32px)); }
+      #compareDropdown .ke-dd-panel { left:auto; right:0; }
+      /* Card-head filters (the Platform chips) are the widest thing in a
+         section head on a phone. The head already drops its actions to their
+         own line; they just couldn't shrink or wrap once there, so the last
+         chip ran off the card. Let them do both. */
+      .ov-actions, .sec-head-actions { flex-shrink:1; flex-wrap:wrap; min-width:0; }
+    }
+    /* ---- Skeleton loaders ---- */
+    @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+    .skel { display:block; background:linear-gradient(90deg,#eef2f7 25%,#e4eaf2 50%,#eef2f7 75%); background-size:200% 100%; animation:shimmer 1.4s ease-in-out infinite; border-radius:5px; }
+    .skel-chart { border-radius:10px; }

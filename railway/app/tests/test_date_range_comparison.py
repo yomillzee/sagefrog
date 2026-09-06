@@ -60,9 +60,8 @@ if "google.cloud.bigquery" not in sys.modules:
 
 import bq_gsc_service  # noqa: E402
 import client_dashboard_config as cdc  # noqa: E402
-from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
-    render_bigquery_dashboard_page,
-)
+from dashboard.assets import dashboard_css  # noqa: E402
+from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
 
 def _render(**kwargs) -> str:
@@ -72,6 +71,14 @@ def _render(**kwargs) -> str:
     )
     base.update(kwargs)
     return render_bigquery_dashboard_page(**base)
+
+
+def _styles() -> str:
+    """The dashboard stylesheet the rendered page links to.
+
+    The CSS moved out of the page into a cached stylesheet (dashboard/assets.py),
+    so rules are asserted against it rather than against the HTML."""
+    return dashboard_css()[1]
 
 
 class QuarterPresetsTest(unittest.TestCase):
@@ -254,8 +261,8 @@ class MeaningfulMovementTest(unittest.TestCase):
         self.assertNotIn("ctr:'up'", html)
 
     def test_row_deltas_are_smaller_than_the_figures_they_qualify(self):
-        html = _render()
-        self.assertIn("#explorerTable .expl-row-delta .cmp-delta { font-size:.62rem;", html)
+        css = _styles()
+        self.assertIn("#explorerTable .expl-row-delta .cmp-delta { font-size:.62rem;", css)
 
 
 class ExplorerHierarchyTest(unittest.TestCase):
@@ -263,28 +270,28 @@ class ExplorerHierarchyTest(unittest.TestCase):
     expanded, so depth is carried by four cues rather than font weight alone."""
 
     def test_each_level_indents_further(self):
-        html = _render()
-        self.assertIn(".indent1 { display:inline-block; width:24px; }", html)
-        self.assertIn(".indent2 { display:inline-block; width:48px; }", html)
+        css = _styles()
+        self.assertIn(".indent1 { display:inline-block; width:24px; }", css)
+        self.assertIn(".indent2 { display:inline-block; width:48px; }", css)
 
     def test_type_gets_smaller_and_quieter_going_down(self):
-        html = _render()
-        self.assertIn(".lvl-campaign .tree-name { font-weight:800; font-size:.85rem;", html)
-        self.assertIn(".lvl-group .tree-name { font-weight:700; font-size:.78rem;", html)
-        self.assertIn(".lvl-ad > td { font-size:.74rem; }", html)
+        css = _styles()
+        self.assertIn(".lvl-campaign .tree-name { font-weight:800; font-size:.85rem;", css)
+        self.assertIn(".lvl-group .tree-name { font-weight:700; font-size:.78rem;", css)
+        self.assertIn(".lvl-ad > td { font-size:.74rem; }", css)
 
     def test_nested_rows_carry_a_depth_rail(self):
-        html = _render()
-        self.assertIn(".lvl-group > td.left { box-shadow:inset 3px 0 0", html)
-        self.assertIn(".lvl-ad > td.left { color:var(--muted); box-shadow:inset 3px 0 0", html)
+        css = _styles()
+        self.assertIn(".lvl-group > td.left { box-shadow:inset 3px 0 0", css)
+        self.assertIn(".lvl-ad > td.left { color:var(--muted); box-shadow:inset 3px 0 0", css)
 
     def test_only_a_campaign_after_a_nested_row_gets_a_separator(self):
         """In the default all-collapsed view every row is a campaign; a rule
         between each of them would just be a heavier grid."""
-        html = _render()
+        css = _styles()
         self.assertIn(
             ".tree-row:not(.lvl-campaign) + .lvl-campaign > td { border-top:2px solid var(--line); }",
-            html,
+            css,
         )
 
 
