@@ -4,18 +4,31 @@ Styled to match Overview / Campaign Explorer rather than inventing its own
 look: the same metric cards, section card, and table chrome (sticky uppercase
 header, right-aligned numbers, click-a-heading-to-sort), so the page reads as
 part of one dashboard. A row of metric cards summarises the current selection,
-then a single Performance card lists send date / delivery / open-rate /
-click-rate / unsub-rate per email, sorted by send date (newest first) until a
-column heading says otherwise. Choosing which emails to show is a low-profile
-control — a compact "Choose emails" button in the card header opens a popover
-checklist (search + list), echoing the Campaign Explorer's picker — so the
-table stays the hero.
+a Trends chart plots it over time, then a single Performance card lists send
+date / delivery / bounce / open / click / click-to-open / unsub per email,
+sorted by send date (newest first) until a column heading says otherwise.
+
+Two things make the numbers mean something rather than just sit there:
+
+* **Every rate is compared to the client's own average** across every synced
+  email — on the tiles ("+1.2 pts vs all emails") and under the open and click
+  figures in each row — so an email that over- or under-performed is visible
+  without anyone doing the arithmetic.
+* **Deliverability and content engagement are on the page**, not just opens:
+  bounce rate (over sends) says whether the list is healthy, and click-to-open
+  (clicks over opens) separates "the subject line worked" from "the email
+  worked".
+
+Choosing what to look at works two ways: quick send-date ranges in the page
+header ("30 days", "90 days", "12 months", "All time") for the common case, and
+a compact "Choose emails" popover checklist for picking exact sends. The table
+can be exported as a CSV of whatever is on screen.
 
 All interaction is client-side: the full email set is embedded once as JSON and
-the tiles, picker, and table are built from it, so selecting, searching,
-sorting, and removing never hit the server. An admin's chosen set can be saved portal-wide
-from the popover (see save_email_performance_selection); it then seeds the view
-for every viewer.
+the tiles, chart, picker, and table are built from it, so selecting, searching,
+sorting, and removing never hit the server. An admin's chosen set can be saved
+portal-wide from the popover (see save_email_performance_selection); it then
+seeds the view for every viewer.
 """
 
 from __future__ import annotations
@@ -31,6 +44,14 @@ from hubspot_reports_service import EmailPerformanceReport
 # Default number of most-recent emails pre-selected into the table on load.
 _DEFAULT_SELECTED = 5
 
+# Send-date ranges offered in the page header. `days` of 0 means "everything".
+_RANGES: tuple[tuple[str, int], ...] = (
+    ("30 days", 30),
+    ("90 days", 90),
+    ("12 months", 365),
+    ("All time", 0),
+)
+
 _EXTRA_CSS = """
 /* This page borrows Overview / Campaign Explorer's visual language wholesale --
    the same section card, metric cards, and table chrome (sticky uppercase
@@ -38,27 +59,44 @@ _EXTRA_CSS = """
    dashboard rather than a page of its own. The few tones the shared dashboard
    hardcodes (and the shell theme has no variable for) are declared once here. */
 .ep-wrap { max-width:1320px; margin:0 auto; --line-soft:#eff3f8; --th-bg:#f4f7fb; --th-hover:#e9eef5; --row-hover:#f7faff; }
-.ep-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
+.ep-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px 20px; margin-bottom:4px; }
 .ep-title { font-size:1.6rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.01em; }
 .ep-sub { font-size:.9rem; color:var(--muted); margin:6px 0 0; }
 
+/* Send-date range pills. These drive both the chart and the table, which is why
+   they sit in the page header rather than inside one card. A range with nothing
+   in it is disabled rather than hidden, so an empty window reads as "nothing was
+   sent then" instead of a control that silently did nothing. */
+.ep-ranges { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding-top:6px; }
+.ep-ranges-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; font-weight:800; color:var(--muted); }
+.ep-range-group { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; background:var(--panel); }
+.ep-range { border:0; border-right:1px solid var(--border); background:transparent; color:var(--text); font-size:.78rem; font-weight:650; padding:7px 12px; cursor:pointer; }
+.ep-range:last-child { border-right:0; }
+.ep-range:hover:not(:disabled):not(.active) { background:var(--surface); }
+.ep-range.active { background:var(--accent); color:#fff; }
+.ep-range:disabled { color:#b3bfcd; cursor:default; }
+
 /* Metric cards -- Overview's .cards / .card, down to the 3px accent top rule. */
-.ep-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:10px; margin:20px 0 16px; }
+.ep-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:20px 0 16px; }
 .ep-tile { background:var(--panel); border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:9px; padding:13px 14px 14px; }
 .ep-tile-label { color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
 .ep-tile-value { margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
 .ep-tile-sub { margin-top:6px; font-size:.72rem; color:var(--muted); font-weight:600; }
+/* Better/worse than this client's own average. Green is always "good for you",
+   which for unsubscribes and bounces means the number went down. */
+.ep-tile-sub.up { color:var(--ok); }
+.ep-tile-sub.down { color:var(--err); }
 
 /* Section card -- the dashboard's <section>: same radius, padding and shadow. */
 .ep-card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px 20px 20px; margin-bottom:16px; box-shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }
 .ep-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 16px; flex-wrap:wrap; }
 .ep-card-head-titles { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
 .ep-card h2 { font-size:1.05rem; font-weight:750; color:var(--navy); margin:0; letter-spacing:-.005em; }
-.ep-card-note { font-size:.78rem; color:var(--muted); }
+.ep-card-note { font-size:.78rem; color:var(--muted); max-width:64ch; }
 .ep-note { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:12px; padding:13px 16px; font-size:.85rem; margin-bottom:20px; }
 
 /* Low-profile picker: a compact button in the card header that opens a popover checklist. */
-.ep-tools { display:flex; align-items:center; gap:10px; }
+.ep-tools { display:flex; align-items:center; gap:8px; }
 .ep-picker { position:relative; }
 .ep-pick-btn { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-size:.8rem; font-weight:650; padding:7px 12px; border-radius:9px; cursor:pointer; }
 .ep-pick-btn:hover { background:var(--surface); border-color:#cbd5e1; }
@@ -78,7 +116,7 @@ _EXTRA_CSS = """
 .ep-search:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(11,92,171,.15); background-color:var(--panel); }
 .ep-pop-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:9px 2px 8px; }
 .ep-count { font-size:.75rem; color:var(--muted); font-weight:650; }
-.ep-actions { display:flex; gap:6px; }
+.ep-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .ep-btn { border:1px solid var(--border); background:var(--panel); color:var(--accent); font-size:.72rem; font-weight:650; padding:4px 9px; border-radius:7px; cursor:pointer; }
 .ep-btn:hover { background:var(--surface); }
 .ep-list { max-height:min(58vh,520px); overflow-y:auto; border:1px solid var(--border); border-radius:10px; }
@@ -101,31 +139,50 @@ _EXTRA_CSS = """
 .ep-save-status.err { color:var(--err); }
 
 /* Trend chart -- Chart.js on the shared card, one line per metric. Deliveries
-   are a count and the three rates are percentages, so they ride separate axes
+   are a count and the rates are percentages, so they ride separate axes
    (counts left, rates right); the legend is clickable, which is how you isolate
-   the unsub line from the much larger open-rate line. */
+   the unsub line from the much larger open-rate line -- and how you bring in the
+   click-to-open and bounce lines, which start hidden so the chart opens readable. */
 .ep-chart-host { position:relative; height:300px; }
 .ep-chart-empty { color:var(--muted); font-size:.86rem; padding:26px 4px; text-align:center; }
 
 /* Table -- the dashboard's table chrome: bordered scroller, sticky uppercase
    header, numbers right-aligned by default, .left for the label column. */
 .ep-table-wrap { overflow:auto; border:1px solid var(--line-soft); border-radius:9px; }
-.ep-table { border-collapse:collapse; width:100%; min-width:760px; font-size:.86rem; }
+.ep-table { border-collapse:separate; border-spacing:0; width:100%; min-width:980px; font-size:.86rem; }
 .ep-table th, .ep-table td { padding:10px 13px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.ep-table th { background:var(--th-bg); color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; position:sticky; top:0; z-index:1; }
+.ep-table th { background:var(--th-bg); color:#5a6b82; text-transform:uppercase; font-size:.67rem; letter-spacing:.05em; font-weight:800; position:sticky; top:0; z-index:2; }
 .ep-table th.left, .ep-table td.left { text-align:left; font-variant-numeric:normal; }
-.ep-table td.left { white-space:normal; max-width:460px; }
+.ep-table td.left { white-space:normal; }
+.ep-table th.left, .ep-table td.left { min-width:250px; max-width:340px; }
+/* The email name stays put while the numbers scroll sideways -- with ten columns
+   a row is otherwise unreadable once you scroll past the label. */
+.ep-table th.left, .ep-table td.left { position:sticky; left:0; background:var(--panel); box-shadow:1px 0 0 var(--line-soft); }
+.ep-table th.left { z-index:3; background:var(--th-bg); }
+.ep-table td.left { z-index:1; }
 .ep-table tbody tr:last-child td { border-bottom:0; }
-.ep-table tbody tr:hover td { background:var(--row-hover); }
+.ep-table tbody tr:hover td, .ep-table tbody tr:hover td.left { background:var(--row-hover); }
 /* Sortable headers, styled like the Explorer's th.expl-sort. */
 .ep-table th.ep-sort { cursor:pointer; user-select:none; transition:background .12s,color .12s; }
 .ep-table th.ep-sort:hover { background:var(--th-hover); color:#33455e; }
 .ep-table th.ep-sort.active { color:var(--accent); }
 .ep-email-name { font-weight:700; color:var(--navy); }
 .ep-email-meta { color:var(--muted); font-size:.74rem; margin-top:2px; font-weight:600; }
+.ep-type { display:inline-block; margin-left:7px; padding:1px 7px; border-radius:999px; background:var(--surface); border:1px solid var(--border);
+  color:var(--muted); font-size:.63rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; vertical-align:middle; }
+/* Per-row comparison to this client's own average, in percentage points. */
+.ep-delta { display:block; margin-top:2px; font-size:.68rem; font-weight:700; color:var(--muted); }
+.ep-delta.up { color:var(--ok); }
+.ep-delta.down { color:var(--err); }
 .ep-remove { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:1.1rem; line-height:1; padding:0 2px; }
 .ep-remove:hover { color:var(--err); }
 .ep-empty { color:var(--muted); font-size:.86rem; padding:26px 4px; text-align:center; }
+.ep-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+.ep-empty .ep-btn { margin-left:6px; }
+@media (max-width: 720px) {
+  .ep-head { flex-direction:column; }
+  .ep-card-head { align-items:flex-start; }
+}
 """
 
 # All interaction is client-side; the email set is read from the JSON script tag.
@@ -169,7 +226,49 @@ _EP_JS = """
   // selection (the N most recent) implies.
   var sort = { key: 'date', dir: 'desc' };
   var SORT_DIRS = { name: 'asc', date: 'desc', sent: 'desc', deliveries: 'desc',
-                    open: 'desc', click: 'desc', unsub: 'desc' };
+                    bounce: 'desc', open: 'desc', click: 'desc', ctor: 'desc',
+                    unsub: 'desc' };
+
+  // Every rate on this page is a ratio of two raw counters, declared once here
+  // so the tiles, the table, the sorting and the chart can never disagree about
+  // what "open rate" means. Bounces are over *sends* (a bounce is precisely a
+  // send that never became a delivery); click-to-open is over opens, which is
+  // what separates "the subject line worked" from "the email worked".
+  var RATES = {
+    bounce: { num: '_bounces', den: '_sent',      dp: 2, better: 'low'  },
+    open:   { num: '_opens',   den: '_delivered', dp: 1, better: 'high' },
+    click:  { num: '_clicks',  den: '_delivered', dp: 1, better: 'high' },
+    ctor:   { num: '_clicks',  den: '_opens',     dp: 1, better: 'high' },
+    unsub:  { num: '_unsub',   den: '_delivered', dp: 2, better: 'low'  }
+  };
+
+  function rate(num, den) {
+    var d = Number(den || 0);
+    return d > 0 ? Number(num || 0) / d : -1;   // no denominator sorts below 0%
+  }
+  function emailRate(e, key) {
+    var r = RATES[key];
+    return rate(e[r.num], e[r.den]);
+  }
+  // Weighted rate across a set of emails: sum the numerators, sum the
+  // denominators, divide -- so a 20k send counts for more than a 200 send,
+  // which is what "our average open rate" actually means.
+  function aggRate(ids, key) {
+    var r = RATES[key], num = 0, den = 0;
+    ids.forEach(function (id) {
+      var e = byId[id]; if (!e) return;
+      num += Number(e[r.num] || 0); den += Number(e[r.den] || 0);
+    });
+    return den > 0 ? 100 * num / den : null;    // percent, or null when unknown
+  }
+
+  var allIds = emails.map(function (e) { return e.id; });
+  // This client's own baseline: every synced email, weighted. Tiles and rows are
+  // measured against it, which is the whole point -- an open rate means nothing
+  // until you know what this list usually does.
+  var baseline = {};
+  Object.keys(RATES).forEach(function (k) { baseline[k] = aggRate(allIds, k); });
+  var baselineCount = allIds.length;
 
   // Sort value per column: strings for the two text columns, numbers for the
   // rest. Rates are recomputed from the raw counts so they sort by their true
@@ -180,15 +279,8 @@ _EP_JS = """
       case 'date':       return String(e._ts || '');
       case 'sent':       return Number(e._sent || 0);
       case 'deliveries': return Number(e._delivered || 0);
-      case 'open':       return rate(e._opens, e._delivered);
-      case 'click':      return rate(e._clicks, e._delivered);
-      case 'unsub':      return rate(e._unsub, e._delivered);
-      default:           return 0;
+      default:           return RATES[key] ? emailRate(e, key) : 0;
     }
-  }
-  function rate(num, den) {
-    var d = Number(den || 0);
-    return d > 0 ? Number(num || 0) / d : -1;   // no deliveries sorts below 0%
   }
   function sortedSelection() {
     var ids = selected.filter(function (id) { return byId[id]; });
@@ -208,48 +300,52 @@ _EP_JS = """
     });
   }
   function fmtInt(n) { try { return Number(n || 0).toLocaleString('en-US'); } catch (e) { return String(n || 0); } }
-  function pct(num, den, dp) {
-    var n = Number(num || 0), d = Number(den || 0);
-    if (!(d > 0)) return '—';
-    return (100 * n / d).toFixed(dp) + '%';
-  }
   function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
 
-  function buildPicker() {
-    listEl.innerHTML = '';
-    emails.forEach(function (e) {
-      var row = document.createElement('label');
-      row.className = 'ep-opt';
-      row.setAttribute('data-search', (String(e.name) + ' ' + String(e.subject || '')).toLowerCase());
-      row.innerHTML =
-        '<input type="checkbox" data-id="' + esc(e.id) + '"' +
-          (selected.indexOf(e.id) >= 0 ? ' checked' : '') + '>' +
-        '<span class="ep-opt-main"><div class="ep-opt-name">' + esc(e.name) + '</div>' +
-        '<div class="ep-opt-sub">' + esc(e.date) + ' &middot; ' + esc(e.deliveries) + ' delivered</div></span>';
-      listEl.appendChild(row);
-    });
+  // "+1.2 pts" / "-0.30 pts" against the all-email baseline, coloured by whether
+  // that direction is good news for the metric (fewer unsubscribes is good).
+  function delta(value, key) {
+    var base = baseline[key];
+    if (value == null || base == null) return { text: '', cls: '' };
+    var r = RATES[key], diff = value - base;
+    var eps = r.dp >= 2 ? 0.005 : 0.05;
+    if (Math.abs(diff) < eps) return { text: 'in line with all ' + baselineCount, cls: '' };
+    var sign = diff > 0 ? '+' : '−';
+    return {
+      text: sign + Math.abs(diff).toFixed(r.dp) + ' pts',
+      cls: (diff > 0) === (r.better === 'high') ? 'up' : 'down'
+    };
+  }
+  function fmtRate(value, key) {
+    return value == null ? '—' : value.toFixed(RATES[key].dp) + '%';
   }
 
-  // Hero tiles summarise the current selection (rates weighted by deliveries, so
-  // they mean the same thing as the per-row rates).
+  // Hero tiles summarise the current selection (rates weighted by their
+  // denominators, so they mean the same thing as the per-row rates) and say how
+  // that selection compares with every email this client has sent.
   function renderTiles() {
-    var del = 0, opn = 0, clk = 0, uns = 0;
-    selected.forEach(function (id) {
-      var e = byId[id]; if (!e) return;
-      del += Number(e._delivered || 0); opn += Number(e._opens || 0);
-      clk += Number(e._clicks || 0);    uns += Number(e._unsub || 0);
-    });
+    var del = 0;
+    selected.forEach(function (id) { var e = byId[id]; if (e) del += Number(e._delivered || 0); });
     setText('ep-kpi-count', String(selected.length));
     setText('ep-kpi-delivered', selected.length ? fmtInt(del) : '—');
-    setText('ep-kpi-open', pct(opn, del, 1));
-    setText('ep-kpi-click', pct(clk, del, 1));
-    setText('ep-kpi-unsub', pct(uns, del, 2));
+    Object.keys(RATES).forEach(function (key) {
+      var v = selected.length ? aggRate(selected, key) : null;
+      setText('ep-kpi-' + key, fmtRate(v, key));
+      var sub = document.getElementById('ep-kpi-' + key + '-sub');
+      if (!sub) return;
+      var d = delta(v, key);
+      sub.className = 'ep-tile-sub' + (d.cls ? ' ' + d.cls : '');
+      sub.textContent = !selected.length ? 'nothing selected'
+        : selected.length === baselineCount ? 'across all ' + baselineCount + ' emails'
+        : d.text ? (d.cls ? d.text + ' vs all emails' : d.text + ' emails')
+        : 'no data yet';
+    });
   }
 
   // Trend chart: one point per selected email, always in send-date order
   // (independent of the table's sort), so the x axis reads left-to-right as
   // time. Deliveries are a count and the rest are percentages, so deliveries
-  // get the left axis and the three rates share the right one.
+  // get the left axis and the rates share the right one.
   var chartHost  = document.getElementById('ep-chart-host');
   var chartEl    = document.getElementById('ep-chart');
   var chartEmpty = document.getElementById('ep-chart-empty');
@@ -264,16 +360,16 @@ _EP_JS = """
     });
   }
 
-  function ratePct(num, den) {
-    var d = Number(den || 0);
-    return d > 0 ? 100 * Number(num || 0) / d : null;   // no deliveries = gap
+  function ratePct(e, key) {
+    var v = emailRate(e, key);
+    return v < 0 ? null : 100 * v;   // no denominator = gap in the line
   }
 
-  function lineFor(label, color, data, axis, dp, suffix) {
+  function lineFor(label, color, data, axis, dp, suffix, hidden) {
     return {
       label: label, data: data, borderColor: color, backgroundColor: color,
       yAxisID: axis, borderWidth: 2, tension: 0.3, pointRadius: 3,
-      pointHoverRadius: 5, spanGaps: true, _dp: dp, _suffix: suffix,
+      pointHoverRadius: 5, spanGaps: true, hidden: !!hidden, _dp: dp, _suffix: suffix,
     };
   }
 
@@ -286,15 +382,20 @@ _EP_JS = """
     if (!ids.length) return;
 
     var rows = ids.map(function (id) { return byId[id]; });
+    function series(key) { return rows.map(function (e) { return ratePct(e, key); }); }
     var cfg = {
       type: 'line',
       data: {
         labels: rows.map(function (e) { return e.date; }),
         datasets: [
           lineFor('Deliveries', '#1d6fd0', rows.map(function (e) { return Number(e._delivered || 0); }), 'yCount', 0, ''),
-          lineFor('Open rate', '#0a7f3f', rows.map(function (e) { return ratePct(e._opens, e._delivered); }), 'yRate', 1, '%'),
-          lineFor('Click rate', '#7c3aed', rows.map(function (e) { return ratePct(e._clicks, e._delivered); }), 'yRate', 2, '%'),
-          lineFor('Unsub rate', '#d6336c', rows.map(function (e) { return ratePct(e._unsub, e._delivered); }), 'yRate', 2, '%'),
+          lineFor('Open rate', '#0a7f3f', series('open'), 'yRate', 1, '%'),
+          lineFor('Click rate', '#7c3aed', series('click'), 'yRate', 2, '%'),
+          lineFor('Unsub rate', '#d6336c', series('unsub'), 'yRate', 2, '%'),
+          // Off by default: six lines at once is unreadable, and these two are
+          // the ones you go looking for rather than glance at.
+          lineFor('Click-to-open', '#0891b2', series('ctor'), 'yRate', 1, '%', true),
+          lineFor('Bounce rate', '#b45309', series('bounce'), 'yRate', 2, '%', true),
         ],
       },
       options: {
@@ -336,6 +437,21 @@ _EP_JS = """
     chart = new Chart(chartEl.getContext('2d'), cfg);
   }
 
+  // A rate cell, with its distance from the client's own average underneath.
+  function rateCell(e, key, withDelta) {
+    var v = emailRate(e, key);
+    var pctText = v < 0 ? '—' : (100 * v).toFixed(RATES[key].dp) + '%';
+    var html = pctText;
+    if (withDelta && v >= 0) {
+      var d = delta(100 * v, key);
+      if (d.text && d.cls) {
+        html += '<span class="ep-delta ' + d.cls + '" title="Compared with the ' +
+                'average across all ' + baselineCount + ' emails">' + esc(d.text) + '</span>';
+      }
+    }
+    return '<td>' + html + '</td>';
+  }
+
   function renderTable() {
     tbodyEl.innerHTML = '';
     if (!selected.length) {
@@ -346,17 +462,21 @@ _EP_JS = """
         var e = byId[id];
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td class="left"><div class="ep-email-name">' + esc(e.name) + '</div>' +
+          '<td class="left"><div class="ep-email-name">' + esc(e.name) +
+            (e.type ? '<span class="ep-type">' + esc(e.type) + '</span>' : '') + '</div>' +
             (e.subject ? '<div class="ep-email-meta">' + esc(e.subject) + '</div>' : '') +
           '</td>' +
           '<td>' + esc(e.date) + '</td>' +
           '<td>' + esc(e.sent) + '</td>' +
           '<td>' + esc(e.deliveries) + '</td>' +
-          '<td>' + esc(e.open) + '</td>' +
-          '<td>' + esc(e.click) + '</td>' +
-          '<td>' + esc(e.unsub) + '</td>' +
+          rateCell(e, 'bounce', false) +
+          rateCell(e, 'open', true) +
+          rateCell(e, 'click', true) +
+          rateCell(e, 'ctor', false) +
+          rateCell(e, 'unsub', false) +
           '<td><button type="button" class="ep-remove" data-remove="' + esc(e.id) +
-            '" title="Remove" aria-label="Remove">&times;</button></td>';
+            '" title="Remove from this table" aria-label="Remove ' + esc(e.name) +
+            ' from this table">&times;</button></td>';
         tbodyEl.appendChild(tr);
       });
     }
@@ -364,6 +484,7 @@ _EP_JS = """
     renderChart();
     updateCount();
     renderSortHeaders();
+    renderRanges();
   }
 
   // The header cells are server-rendered; this only paints the active column
@@ -376,7 +497,7 @@ _EP_JS = """
       th.classList.toggle('active', active);
       th.setAttribute('aria-sort', active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
       var arrow = th.querySelector('.ep-arrow');
-      if (arrow) arrow.textContent = active ? (sort.dir === 'asc' ? ' \u25B4' : ' \u25BE') : '';
+      if (arrow) arrow.textContent = active ? (sort.dir === 'asc' ? ' ▴' : ' ▾') : '';
     });
   }
   if (theadEl) theadEl.addEventListener('click', function (ev) {
@@ -384,7 +505,7 @@ _EP_JS = """
     if (!th) return;
     var key = th.getAttribute('data-key');
     // Re-clicking the active column flips it; a new column starts in the
-    // direction that reads as "best first" for that kind of value.
+    // direction that surfaces what you clicked it to find.
     if (sort.key === key) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
     else { sort.key = key; sort.dir = SORT_DIRS[key] || 'desc'; }
     renderTable();
@@ -421,19 +542,113 @@ _EP_JS = """
     if (cb) cb.checked = false;
   });
 
+  // ---- Send-date ranges -------------------------------------------------
+  // The common question is "how did the last quarter go", not "show me these
+  // five sends", so the ranges are the primary control and the checklist is
+  // there for when you want exact emails. A range whose window is empty is
+  // disabled, so you never click one and watch the page go blank.
+  var rangeEls = Array.prototype.slice.call(document.querySelectorAll('.ep-range'));
+
+  function idsInRange(days) {
+    if (!days) return allIds.slice();
+    var cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    var iso = cutoff.toISOString().slice(0, 10);
+    return allIds.filter(function (id) {
+      var ts = String(byId[id]._ts || '');
+      return ts && ts.slice(0, 10) >= iso;
+    });
+  }
+
+  var rangeIds = {};
+  rangeEls.forEach(function (btn) {
+    var days = Number(btn.getAttribute('data-days') || 0);
+    var ids = idsInRange(days);
+    rangeIds[days] = ids;
+    btn.disabled = !ids.length;
+    btn.title = ids.length
+      ? ids.length + (ids.length === 1 ? ' email' : ' emails') + ' sent in this window'
+      : 'No emails sent in this window';
+    btn.addEventListener('click', function () {
+      if (btn.disabled) return;
+      selected = rangeIds[days].slice();
+      syncChecks(); renderTable();
+    });
+  });
+
+  // A range pill lights up whenever the selection happens to *be* that window --
+  // whether you clicked the pill or arrived at the same set by hand.
+  function sameSet(a, b) {
+    if (a.length !== b.length) return false;
+    var seen = {};
+    a.forEach(function (id) { seen[id] = true; });
+    return b.every(function (id) { return seen[id]; });
+  }
+  function renderRanges() {
+    rangeEls.forEach(function (btn) {
+      var days = Number(btn.getAttribute('data-days') || 0);
+      var on = !btn.disabled && selected.length && sameSet(selected, rangeIds[days] || []);
+      btn.classList.toggle('active', !!on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  // ---- Picker ------------------------------------------------------------
+  function buildPicker() {
+    listEl.innerHTML = '';
+    emails.forEach(function (e) {
+      var row = document.createElement('label');
+      row.className = 'ep-opt';
+      row.setAttribute('data-search',
+        (String(e.name) + ' ' + String(e.subject || '') + ' ' + String(e.type || '')).toLowerCase());
+      row.innerHTML =
+        '<input type="checkbox" data-id="' + esc(e.id) + '"' +
+          (selected.indexOf(e.id) >= 0 ? ' checked' : '') + '>' +
+        '<span class="ep-opt-main"><div class="ep-opt-name">' + esc(e.name) + '</div>' +
+        // Enough to choose on without opening the email: when it went, how big
+        // the send was, and how it did.
+        '<div class="ep-opt-sub">' + esc(e.date) + ' &middot; ' + esc(e.deliveries) +
+        ' delivered &middot; ' + esc(e.open) + ' open</div></span>';
+      listEl.appendChild(row);
+    });
+  }
+
+  function shownOptions() {
+    return Array.prototype.slice.call(listEl.querySelectorAll('.ep-opt'))
+      .filter(function (row) { return row.style.display !== 'none'; });
+  }
+
   if (searchEl) {
     searchEl.addEventListener('input', function () {
       var q = searchEl.value.trim().toLowerCase();
-      var any = false;
+      var shown = 0;
       listEl.querySelectorAll('.ep-opt').forEach(function (row) {
         var hit = !q || row.getAttribute('data-search').indexOf(q) >= 0;
         row.style.display = hit ? '' : 'none';
-        if (hit) any = true;
+        if (hit) shown++;
       });
       var noRes = document.getElementById('ep-list-empty');
-      if (noRes) noRes.style.display = any ? 'none' : '';
+      if (noRes) noRes.style.display = shown ? 'none' : '';
+      var addBtn = document.getElementById('ep-add-shown');
+      if (addBtn) {
+        addBtn.hidden = !q || !shown;
+        addBtn.textContent = 'Add these ' + shown;
+      }
     });
   }
+
+  // "Add these N" turns a search into a selection in one click -- the fastest
+  // way to build a table of, say, every "Newsletter" send.
+  var addShownBtn = document.getElementById('ep-add-shown');
+  if (addShownBtn) addShownBtn.addEventListener('click', function () {
+    shownOptions().forEach(function (row) {
+      var cb = row.querySelector('input[data-id]');
+      if (cb && selected.indexOf(cb.getAttribute('data-id')) < 0) {
+        selected.push(cb.getAttribute('data-id'));
+      }
+    });
+    syncChecks(); renderTable();
+  });
 
   var recentBtn = document.getElementById('ep-recent');
   if (recentBtn) recentBtn.addEventListener('click', function () {
@@ -452,21 +667,65 @@ _EP_JS = """
 
   // Low-profile picker: a header button toggles a popover checklist. Clicking
   // outside or Escape closes it; clicks inside don't bubble to the doc handler.
+  // Opening moves focus into the search box and closing hands it back to the
+  // button, so the whole control works from the keyboard.
   var pickBtn = document.getElementById('ep-pick-btn');
   var pop = document.getElementById('ep-pop');
+  var setPickerOpen = function () {};
   if (pickBtn && pop) {
-    var setOpen = function (o) {
+    setPickerOpen = function (o) {
       pop.hidden = !o;
       pickBtn.setAttribute('aria-expanded', o ? 'true' : 'false');
-      if (o && searchEl) { searchEl.value = ''; searchEl.dispatchEvent(new Event('input')); }
+      if (o && searchEl) {
+        searchEl.value = '';
+        searchEl.dispatchEvent(new Event('input'));
+        searchEl.focus();
+      } else if (!o) {
+        pickBtn.focus();
+      }
     };
-    pickBtn.addEventListener('click', function (e) { e.stopPropagation(); setOpen(pop.hidden); });
+    pickBtn.addEventListener('click', function (e) { e.stopPropagation(); setPickerOpen(pop.hidden); });
     pop.addEventListener('click', function (e) { e.stopPropagation(); });
     var xBtn = pop.querySelector('.ep-pop-x');
-    if (xBtn) xBtn.addEventListener('click', function () { setOpen(false); });
-    document.addEventListener('click', function () { setOpen(false); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
+    if (xBtn) xBtn.addEventListener('click', function () { setPickerOpen(false); });
+    document.addEventListener('click', function () { if (!pop.hidden) { pop.hidden = true; pickBtn.setAttribute('aria-expanded', 'false'); } });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !pop.hidden) setPickerOpen(false); });
   }
+  var emptyOpen = document.getElementById('ep-empty-open');
+  if (emptyOpen) emptyOpen.addEventListener('click', function (e) {
+    e.stopPropagation(); setPickerOpen(true);
+  });
+
+  // ---- CSV export --------------------------------------------------------
+  // Whatever is on screen, in the order it is on screen -- the table is where
+  // people build the slide, and retyping ten numbers into a deck is how numbers
+  // get typed wrong.
+  function csvCell(v) {
+    var s = String(v == null ? '' : v);
+    return /[",\\r\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  var CSV_HEAD = ['Email', 'Subject', 'Type', 'Send date', 'Sent', 'Delivered',
+                  'Bounce rate', 'Open rate', 'Click rate', 'Click-to-open', 'Unsub rate'];
+  var exportBtn = document.getElementById('ep-export');
+  if (exportBtn) exportBtn.addEventListener('click', function () {
+    var ids = sortedSelection();
+    if (!ids.length) return;
+    var rows = [CSV_HEAD].concat(ids.map(function (id) {
+      var e = byId[id];
+      return [e.name, e.subject || '', e.type || '', e.date, e.sent, e.deliveries,
+              e.bounce, e.open, e.click, e.ctor, e.unsub];
+    }));
+    // The BOM is what makes Excel open UTF-8 names correctly.
+    var body = '\\ufeff' + rows.map(function (r) { return r.map(csvCell).join(','); }).join('\\r\\n');
+    var url = URL.createObjectURL(new Blob([body], { type: 'text/csv;charset=utf-8' }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = (exportBtn.getAttribute('data-slug') || 'email') + '-performance.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  });
 
   // Admin-only: persist the current selection portal-wide. The Save button only
   // exists in the DOM for admins, so its absence is the guard.
@@ -506,7 +765,7 @@ def _fmt_int(n: Any) -> str:
 
 
 def _rate_str(num: Any, den: Any, decimals: int = 1) -> str:
-    """Percentage of num over den (over deliveries), em dash when den is 0."""
+    """Percentage of num over den, em dash when den is 0."""
     try:
         n, d = float(num or 0), float(den or 0)
     except (TypeError, ValueError):
@@ -530,12 +789,44 @@ def _iso(v: Any) -> str:
     return str(v) if v else ""
 
 
-def _sort_th(key: str, label: str, *, left: bool = False) -> str:
+# HubSpot spells the email kind several ways depending on which endpoint the row
+# came from ("BATCH_EMAIL", "batch", "AUTOMATED_AB_EMAIL", …); this maps the ones
+# we see onto something a person would say out loud.
+_TYPE_LABELS: dict[str, str] = {
+    "batch": "Batch",
+    "batch_email": "Batch",
+    "ab": "A/B",
+    "ab_email": "A/B",
+    "automated_ab_email": "A/B",
+    "automated": "Automated",
+    "automated_email": "Automated",
+    "blog": "Blog",
+    "blog_email": "Blog",
+    "rss": "RSS",
+    "rss_email": "RSS",
+    "followup": "Follow-up",
+    "followup_email": "Follow-up",
+    "local_time_email": "Local time",
+    "single_send_api": "Single send",
+}
+
+
+def _type_label(v: Any) -> str:
+    key = str(v or "").strip().lower()
+    if not key:
+        return ""
+    if key in _TYPE_LABELS:
+        return _TYPE_LABELS[key]
+    return key.replace("_email", "").replace("_", " ").strip().title()
+
+
+def _sort_th(key: str, label: str, *, left: bool = False, tip: str = "") -> str:
     """A clickable column heading. The arrow span is filled in by the JS, which
     owns which column is active."""
     cls = "ep-sort left" if left else "ep-sort"
+    title = f' title="{_esc(tip)}"' if tip else ""
     return (
-        f'<th class="{cls}" data-key="{key}" scope="col" aria-sort="none">'
+        f'<th class="{cls}" data-key="{key}" scope="col" aria-sort="none"{title}>'
         f'{_esc(label)}<span class="ep-arrow"></span></th>'
     )
 
@@ -549,33 +840,55 @@ def _num(v: Any) -> float:
 
 
 def _email_payload(emails: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Display-ready records for the client-side picker + table. Rates are
-    computed over deliveries here so the JS just renders strings; the leading-
-    underscore keys carry the raw counts the hero tiles aggregate live."""
+    """Display-ready records for the client-side picker + table.
+
+    Rates are precomputed here so the JS just renders strings, and the leading-
+    underscore keys carry the raw counts the tiles, deltas and sorting aggregate
+    live. Note the denominators: opens/clicks/unsubscribes are over deliveries,
+    bounces are over sends (a bounce is a send that never got delivered), and
+    click-to-open is clicks over opens."""
     out = []
     for e in emails:
         delivered = e.get("delivered") or 0
+        sent = e.get("sent") or 0
+        opens = e.get("opens") or 0
         out.append({
             "id":         str(e.get("email_id")),
             "name":       e.get("name") or e.get("subject") or "Untitled email",
             "subject":    e.get("subject") or "",
+            "type":       _type_label(e.get("email_type")),
             "date":       _fmt_dt(e.get("publish_date")),
             # Sortable form of the send date (ISO, so string order = date order).
             "_ts":        _iso(e.get("publish_date")),
-            "sent":       _fmt_int(e.get("sent") or 0),
+            "sent":       _fmt_int(sent),
             "deliveries": _fmt_int(delivered),
-            "open":       _rate_str(e.get("opens"), delivered),
+            "bounce":     _rate_str(e.get("bounces"), sent, decimals=2),
+            "open":       _rate_str(opens, delivered),
             "click":      _rate_str(e.get("clicks"), delivered),
+            "ctor":       _rate_str(e.get("clicks"), opens),
             "unsub":      _rate_str(e.get("unsubscribed"), delivered, decimals=2),
-            # Raw counts for the KPI tiles (weighted rates = Σnum / Σdeliveries)
-            # and for column sorting, which must not sort the rounded strings.
-            "_sent":      _num(e.get("sent")),
+            # Raw counts for the KPI tiles (weighted rates = Σnum / Σden), for the
+            # vs-average deltas, and for column sorting, which must not sort the
+            # rounded strings.
+            "_sent":      _num(sent),
             "_delivered": _num(delivered),
-            "_opens":     _num(e.get("opens")),
+            "_opens":     _num(opens),
             "_clicks":    _num(e.get("clicks")),
             "_unsub":     _num(e.get("unsubscribed")),
+            "_bounces":   _num(e.get("bounces")),
         })
     return out
+
+
+def _tile(key: str, label: str, sub: str) -> str:
+    """One metric card. Rate tiles fill their sub-line from the JS with how the
+    selection compares to every email this client has sent; `sub` is the static
+    fallback shown before the first render."""
+    return (
+        f'<div class="ep-tile"><div class="ep-tile-label">{_esc(label)}</div>'
+        f'<div class="ep-tile-value" id="ep-kpi-{key}">—</div>'
+        f'<div class="ep-tile-sub" id="ep-kpi-{key}-sub">{_esc(sub)}</div></div>'
+    )
 
 
 def render_email_performance(
@@ -589,11 +902,9 @@ def render_email_performance(
     session_is_admin: bool = False,
     saved_selection: list[str] | tuple[str, ...] | None = None,
 ) -> str:
-    head = (
-        '<div class="ep-head">'
+    title_block = (
         '<div><h1 class="ep-title">Email Performance</h1>'
         f'<p class="ep-sub">HubSpot marketing email reporting for {_esc(label)}.</p></div>'
-        '</div>'
     )
 
     if not report.configured:
@@ -601,6 +912,7 @@ def render_email_performance(
             f'<div class="ep-note">{_esc(report.error or "HubSpot is not configured for this client.")} '
             'Connect HubSpot from the Connectors page to enable email reporting.</div>'
         )
+        head = f'<div class="ep-head">{title_block}</div>'
         return _shell(client_slug, label, f'<div class="ep-wrap">{head}{body}</div>',
                       access_key, use_session, session_email, session_is_admin)
 
@@ -613,31 +925,46 @@ def render_email_performance(
             'statistics — run a HubSpot sync from the Connectors page, then refresh.'
         )
         body = f'<div class="ep-note">{_esc(note)}</div>'
+        head = f'<div class="ep-head">{title_block}</div>'
         return _shell(client_slug, label, f'<div class="ep-wrap">{head}{body}</div>',
                       access_key, use_session, session_email, session_is_admin)
 
+    total = len(payload)
+
+    # Send-date ranges govern the chart *and* the table, so they sit with the
+    # page title rather than inside one card. The JS disables a window nothing
+    # was sent in, and lights up whichever one matches the current selection.
+    range_btns = "".join(
+        f'<button type="button" class="ep-range" data-days="{days}" aria-pressed="false">'
+        f'{_esc(text)}</button>'
+        for text, days in _RANGES
+    )
+    ranges = (
+        '<div class="ep-ranges">'
+        '<span class="ep-ranges-label">Sent in</span>'
+        f'<span class="ep-range-group" role="group" aria-label="Send date range">{range_btns}</span>'
+        '</div>'
+    )
+    head = f'<div class="ep-head">{title_block}{ranges}</div>'
+
     # Hero KPI tiles — values are filled live by the JS from the current
     # selection, so they read as a real dashboard summary (like Lead Tracking /
-    # Overview) rather than a static header.
-    total = len(payload)
+    # Overview) rather than a static header. Every rate tile carries how the
+    # selection compares with this client's own all-email average.
     tiles = (
         '<div class="ep-tiles">'
-        '<div class="ep-tile t-count"><div class="ep-tile-label">Emails selected</div>'
+        '<div class="ep-tile"><div class="ep-tile-label">Emails selected</div>'
         '<div class="ep-tile-value" id="ep-kpi-count">0</div>'
         f'<div class="ep-tile-sub">of {total} available</div></div>'
-        '<div class="ep-tile t-delivered"><div class="ep-tile-label">Delivered</div>'
+        '<div class="ep-tile"><div class="ep-tile-label">Delivered</div>'
         '<div class="ep-tile-value" id="ep-kpi-delivered">—</div>'
         '<div class="ep-tile-sub">across selected</div></div>'
-        '<div class="ep-tile t-open"><div class="ep-tile-label">Avg open rate</div>'
-        '<div class="ep-tile-value" id="ep-kpi-open">—</div>'
-        '<div class="ep-tile-sub">over deliveries</div></div>'
-        '<div class="ep-tile t-click"><div class="ep-tile-label">Avg click rate</div>'
-        '<div class="ep-tile-value" id="ep-kpi-click">—</div>'
-        '<div class="ep-tile-sub">over deliveries</div></div>'
-        '<div class="ep-tile t-unsub"><div class="ep-tile-label">Avg unsub rate</div>'
-        '<div class="ep-tile-value" id="ep-kpi-unsub">—</div>'
-        '<div class="ep-tile-sub">over deliveries</div></div>'
-        '</div>'
+        + _tile("open", "Open rate", "of deliveries")
+        + _tile("click", "Click rate", "of deliveries")
+        + _tile("ctor", "Click-to-open", "clicks per open")
+        + _tile("unsub", "Unsub rate", "of deliveries")
+        + _tile("bounce", "Bounce rate", "of sends")
+        + '</div>'
     )
 
     # Admins get a Save control (in the popover footer) that persists the ticked
@@ -672,9 +999,11 @@ def render_email_performance(
         '<div class="ep-pop-head"><span>Choose emails</span>'
         '<button type="button" class="ep-pop-x" aria-label="Close">&times;</button></div>'
         '<input type="text" id="ep-search" class="ep-search" '
-        'placeholder="Search emails…" autocomplete="off">'
-        '<div class="ep-pop-bar"><span class="ep-count" id="ep-pop-count"></span>'
+        'placeholder="Search by name, subject or type…" autocomplete="off">'
+        '<div class="ep-pop-bar">'
+        '<span class="ep-count" id="ep-pop-count" aria-live="polite"></span>'
         '<span class="ep-actions">'
+        '<button type="button" class="ep-btn" id="ep-add-shown" hidden>Add these</button>'
         '<button type="button" class="ep-btn" id="ep-recent">10 most recent</button>'
         '<button type="button" class="ep-btn" id="ep-clear">Clear</button>'
         '</span></div>'
@@ -682,6 +1011,11 @@ def render_email_performance(
         '<div class="ep-list-empty" id="ep-list-empty" style="display:none">No emails match your search.</div>'
         f'{save_foot}'
         '</div></div>'
+    )
+
+    export_control = (
+        f'<button type="button" class="ep-pick-btn" id="ep-export" data-slug="{_esc(client_slug)}" '
+        'title="Download the table exactly as it is on screen">Export CSV</button>'
     )
 
     # Trend card -- the selected emails plotted over their send dates, so the
@@ -692,11 +1026,12 @@ def render_email_performance(
         '<div class="ep-card-head">'
         '<div class="ep-card-head-titles"><h2>Trends</h2>'
         '<span class="ep-card-note">Selected emails by send date. '
-        'Click a legend key to hide or show a line.</span></div>'
+        'Click a legend key to hide a line, or to bring in click-to-open and '
+        'bounce rate.</span></div>'
         '</div>'
         '<div class="ep-chart-host" id="ep-chart-host"><canvas id="ep-chart"></canvas></div>'
         '<div class="ep-chart-empty" id="ep-chart-empty" style="display:none">'
-        'No emails selected — use “Choose emails” to plot a trend.</div>'
+        'No emails selected — pick a range above, or use “Choose emails”.</div>'
         '</div>'
     )
 
@@ -704,18 +1039,27 @@ def render_email_performance(
         '<div class="ep-card">'
         '<div class="ep-card-head">'
         '<div class="ep-card-head-titles"><h2>Performance</h2>'
-        '<span class="ep-card-note">Rates are calculated over deliveries. '
-        'Click a column heading to sort.</span></div>'
-        f'<div class="ep-tools">{picker_control}</div>'
+        f'<span class="ep-card-note">Open, click and unsub rates are over deliveries; '
+        f'bounce rate is over sends. The small figure under an open or click rate is '
+        f'its distance from the average across all {total} emails. Click a column '
+        'heading to sort.</span></div>'
+        f'<div class="ep-tools">{picker_control}{export_control}</div>'
         '</div>'
         '<div class="ep-table-wrap"><table class="ep-table">'
         f'<thead id="ep-thead"><tr>{_sort_th("name", "Email", left=True)}'
         f'{_sort_th("date", "Send date")}{_sort_th("sent", "Sent")}'
-        f'{_sort_th("deliveries", "Deliveries")}{_sort_th("open", "Open rate")}'
-        f'{_sort_th("click", "Click rate")}{_sort_th("unsub", "Unsub rate")}'
-        '<th></th></tr></thead><tbody id="ep-tbody"></tbody></table></div>'
+        f'{_sort_th("deliveries", "Deliveries")}'
+        f'{_sort_th("bounce", "Bounce rate", tip="Bounces as a share of sends")}'
+        f'{_sort_th("open", "Open rate", tip="Opens as a share of deliveries")}'
+        f'{_sort_th("click", "Click rate", tip="Clicks as a share of deliveries")}'
+        f'{_sort_th("ctor", "Click-to-open", tip="Clicks as a share of opens — how the email itself did, once it was opened")}'
+        f'{_sort_th("unsub", "Unsub rate", tip="Unsubscribes as a share of deliveries")}'
+        '<th scope="col"><span class="ep-sr-only">Remove</span></th></tr></thead>'
+        '<tbody id="ep-tbody"></tbody></table></div>'
         '<div class="ep-empty" id="ep-empty" style="display:none">'
-        'No emails selected — use “Choose emails” to build your table.</div>'
+        'No emails selected — pick a range above, or'
+        '<button type="button" class="ep-btn" id="ep-empty-open">choose emails</button>'
+        '</div>'
         '</div>'
     )
 

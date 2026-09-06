@@ -63,6 +63,34 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-06",
+        title="Email Performance says whether a send actually did well",
+        area="Email Performance",
+        kind="improved",
+        summary=(
+            "Every open and click rate is now shown against this client's own "
+            "average, bounce rate and click-to-open have been added, and you can "
+            "jump to the last 30 days, 90 days or 12 months instead of ticking "
+            "emails one at a time."
+        ),
+        details=(
+            "Under each open and click rate is how far it sits from the average "
+            "across every email that client has sent — green when it beat it.",
+            "The summary cards do the same for whatever you have selected, so "
+            "you can tell a good quarter from a normal one at a glance.",
+            "Two new columns: bounce rate (of sends, so a shaky list shows up) "
+            "and click-to-open (clicks per open — how the email did once it was "
+            "opened, separately from the subject line).",
+            "A “Sent in” control at the top switches the whole page — chart and "
+            "table — to the last 30 days, 90 days, 12 months or all time. A "
+            "window with nothing in it is greyed out rather than going blank.",
+            "“Export CSV” downloads the table exactly as it is on screen.",
+            "The email name now stays put while the numbers scroll sideways, "
+            "each row is tagged Batch / Automated / A/B, and searching in "
+            "“Choose emails” offers to add everything the search found.",
+        ),
+    ),
+    Entry(
+        date="2026-09-06",
         title="Google Business Profile is now a connector and a dashboard tab",
         area="Client dashboards · Google Business",
         kind="new",
