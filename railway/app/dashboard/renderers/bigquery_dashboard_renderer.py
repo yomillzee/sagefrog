@@ -23,7 +23,7 @@ from dashboard.renderers.base_layout import (
     platform_nav_flags,
     site_footer_html,
 )
-from dashboard.renderers import pagespeed_renderer
+from dashboard.renderers import google_business_renderer, pagespeed_renderer
 # Script-safe JSON for values embedded in the page's inline <script>: escapes
 # < > & so a stored config value (keyword lists, watchlist, event names) can't
 # close the script tag and run as markup.
@@ -1211,6 +1211,12 @@ def render_bigquery_dashboard_page(
     pagespeed_pane_css = pagespeed_renderer.pane_css()
     pagespeed_pane_js = pagespeed_renderer.pane_js()
 
+    # Google Business Profile tab — same deal: the pane is always emitted and the
+    # sidebar nav button gates on the google_business connector.
+    google_business_pane_html = google_business_renderer.pane_html()
+    google_business_pane_css = google_business_renderer.pane_css()
+    google_business_pane_js = google_business_renderer.pane_js()
+
     # No paid-ad connector (google/linkedin/meta) -- the paid Summary/Trends
     # cards have no BQ mart to read and would otherwise render a zeroed-out
     # panel with a table-not-found error (see e.g. Andesa: GA4 + GSC only).
@@ -2306,6 +2312,7 @@ def render_bigquery_dashboard_page(
     .chart-canvas-host {{ position:relative; width:100%; }}
     .chart-canvas-host canvas {{ display:block; }}
     {pagespeed_pane_css}
+    {google_business_pane_css}
     /* Sessions-over-time current-vs-previous legend */
     .cmp-legend {{ display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; font-size:.78rem; color:var(--muted); }}
     .cmp-item {{ display:inline-flex; align-items:center; gap:7px; }}
@@ -2831,6 +2838,7 @@ def render_bigquery_dashboard_page(
       {gsc_sections_html}
     </div><!-- /pane-gsc -->
     {pagespeed_pane_html}
+    {google_business_pane_html}
   </main>
   {site_footer_html()}
     </div>
@@ -2914,6 +2922,7 @@ def render_bigquery_dashboard_page(
     const PAGESPEED_TARGETS_API= "{_aurl(f'/api/clients/{api_client_key}/pagespeed/targets')}";
     const PAGESPEED_TARGETS    = {pagespeed_targets_json};
     const PAGESPEED_STRATEGIES = {pagespeed_strategies_json};
+    const GOOGLE_BUSINESS_API  = "{_aurl(f'/api/clients/{api_client_key}/google-business/summary')}";
     const GSC_KEYWORD_CONFIG_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-config')}";
     const GSC_KEYWORD_MATCHES_API = "{_aurl(f'/api/clients/{api_client_key}/gsc/keyword-matches')}";
     const GSC_BRANDED_ROOTS = {_json_script([s.strip() for s in gsc_branded_roots.splitlines() if s.strip()])};
@@ -3713,7 +3722,7 @@ def render_bigquery_dashboard_page(
     }}
 
     // ---- Tab system ----
-    const TABS = ['overview', 'explorer', 'analytics', 'ai_traffic', 'gsc', 'site_performance'];
+    const TABS = ['overview', 'explorer', 'analytics', 'ai_traffic', 'gsc', 'site_performance', 'google_business'];
     let currentTab = 'overview';
     let analyticsLoaded = false;
     let explorerLoaded = false;
@@ -3769,6 +3778,10 @@ def render_bigquery_dashboard_page(
       if (tab === 'site_performance' && !sitePerfLoaded) {{
         sitePerfLoaded = true;
         loadSitePerformance();
+      }}
+      if (tab === 'google_business' && !googleBusinessLoaded) {{
+        googleBusinessLoaded = true;
+        loadGoogleBusiness();
       }}
     }}
 
@@ -4938,6 +4951,7 @@ def render_bigquery_dashboard_page(
       }}
     }}
     {pagespeed_pane_js}
+    {google_business_pane_js}
     // Earliest synced date per source (google/linkedin/meta/google_analytics/gsc),
     // populated by loadHealth() below. Used to warn when a comparison period
     // (see compareStart/compareEnd) falls before the data actually starts.
@@ -7916,6 +7930,9 @@ def render_bigquery_dashboard_page(
       // pinned to whatever range was active when it first opened. loadSemrush()
       // is deliberately not called: its endpoint takes no dates.
       else if (currentTab==='gsc') {{ gscLoaded=false; loadGsc(); gscLoaded=true; }}
+      // Google Business reads the selected window too, so the same rule applies:
+      // without this the tab stays pinned to the range it first opened with.
+      else if (currentTab==='google_business') {{ googleBusinessLoaded=false; loadGoogleBusiness(); googleBusinessLoaded=true; }}
     }}
 
     // ---- Date presets ----

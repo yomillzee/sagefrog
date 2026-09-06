@@ -3236,6 +3236,38 @@ def client_pagespeed_summary(
         raise _bq_endpoint_failure(exc) from exc
 
 
+@router.get(
+    "/api/clients/{client_key}/google-business/summary",
+    summary="Client Google Business Profile views, actions and reviews from BigQuery",
+)
+def client_google_business_summary(
+    client_key: str,
+    request: Request,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+) -> dict:
+    normalized = (client_key or "").strip().lower()
+    project_id, dataset_id = _load_bq_test_config(normalized)
+    web_auth.authenticate_dashboard_api(request, client_slug=normalized)
+    start, end = _resolve_marketing_dates(start_date, end_date)
+    try:
+        import bq_google_business_service
+        # Google finalises a day's listing metrics a few days late and the sync
+        # runs nightly, so a 15-minute TTL (matching Search Console) is plenty —
+        # this is not data that changes between two page loads.
+        return _cached_bq_read(
+            f"{normalized}.google_business.summary",
+            {"start": start.isoformat(), "end": end.isoformat()},
+            ttl_seconds=900,
+            fetch=lambda: bq_google_business_service.fetch_summary(
+                client_key=normalized, project=project_id,
+                start_date=start, end_date=end,
+            ),
+        )
+    except Exception as exc:
+        raise _bq_endpoint_failure(exc) from exc
+
+
 @router.post(
     "/api/clients/nixon/backfill-linkedin",
     summary="Nixon: 180-day LinkedIn backfill into BigQuery (session-authed)",

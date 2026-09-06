@@ -121,6 +121,36 @@ def _schema_scores_daily(bq):
     ]
 
 
+def _schema_crux_history(bq):
+    """Weekly CrUX (real-user) history — one row per collection period.
+
+    Columns are generated from crux_service's metric list so the table and the
+    API client can't drift apart. Each metric contributes its 75th-percentile
+    value plus the good / needs-improvement / poor share of visits, which is
+    what "does this site pass Core Web Vitals" actually means.
+    """
+    import crux_service
+
+    fields = [
+        bq.SchemaField("client_key",   "STRING", mode="REQUIRED"),
+        bq.SchemaField("origin",       "STRING", mode="REQUIRED"),
+        bq.SchemaField("form_factor",  "STRING", mode="REQUIRED"),
+        # period_end is the partition key: collection periods overlap (each spans
+        # 28 days, stepping weekly), so the end date is what makes one unique.
+        bq.SchemaField("period_end",   "DATE",   mode="REQUIRED"),
+        bq.SchemaField("period_start", "DATE",   mode="NULLABLE"),
+    ]
+    for prefix in crux_service.METRIC_PREFIXES:
+        fields.extend([
+            bq.SchemaField(f"{prefix}_p75",  "FLOAT64", mode="NULLABLE"),
+            bq.SchemaField(f"{prefix}_good", "FLOAT64", mode="NULLABLE"),
+            bq.SchemaField(f"{prefix}_ni",   "FLOAT64", mode="NULLABLE"),
+            bq.SchemaField(f"{prefix}_poor", "FLOAT64", mode="NULLABLE"),
+        ])
+    fields.append(bq.SchemaField("synced_at", "TIMESTAMP", mode="NULLABLE"))
+    return fields
+
+
 def ensure_pagespeed_tables() -> None:
     bq = _bq()
     client = _client()
@@ -130,6 +160,10 @@ def ensure_pagespeed_tables() -> None:
     table = bq.Table(f"{dataset_ref}.scores_daily", schema=_schema_scores_daily(bq))
     table.time_partitioning = bq.TimePartitioning(field="metric_date")
     client.create_table(table, exists_ok=True, timeout=30)
+
+    crux_table = bq.Table(f"{dataset_ref}.crux_history_weekly", schema=_schema_crux_history(bq))
+    crux_table.time_partitioning = bq.TimePartitioning(field="period_end")
+    client.create_table(crux_table, exists_ok=True, timeout=30)
     _log.info("PageSpeed tables ensured in %s", dataset_ref)
 
 
@@ -244,6 +278,118 @@ def sync_pagespeed_to_bq(
     return {"total_rows": 1, "errors": errors}
 
 
+def sync_crux_history_to_bq(
+    url: str,
+    *,
+    client_key: str,
+    strategy: str = "desktop",
+) -> dict[str, Any]:
+    """Pull the 25-week CrUX history for `url`'s origin and upsert it into BQ.
+
+    Unlike the PSI scores above — where each sync contributes exactly one new
+    dated row — CrUX hands back the whole six-month window every time. So this
+    deletes precisely the periods it is about to write and re-loads them, which
+    keeps re-runs idempotent while letting the table accumulate history *beyond*
+    the API's 25-week window as the weeks roll forward.
+
+    An origin with too little Chrome traffic isn't an error: CrUX 404s, the
+    service reports not_enough_data, and this writes nothing and returns zero
+    rows so the connector card stays green.
+    """
+    import crux_service
+
+    ensure_pagespeed_tables()
+
+    now = datetime.now(tz=timezone.utc).isoformat()
+    snapshot = crux_service.build_crux_snapshot(url, strategy)
+    if snapshot.get("error"):
+        return {"total_rows": 0, "errors": {"crux": snapshot["error"]}}
+
+    origin = snapshot.get("origin") or crux_service.normalize_origin(url)
+    form_factor = snapshot.get("form_factor") or strategy
+    periods = snapshot.get("periods") or []
+    if not periods:
+        _log.info("CrUX: no eligible data for %s (%s)", origin, form_factor)
+        return {"total_rows": 0, "not_enough_data": bool(snapshot.get("not_enough_data")), "errors": {}}
+
+    rows: list[dict[str, Any]] = []
+    for p in periods:
+        row = {
+            "client_key": client_key,
+            "origin": origin,
+            "form_factor": form_factor,
+            "period_end": p.get("period_end"),
+            "period_start": p.get("period_start"),
+            "synced_at": now,
+        }
+        for prefix in crux_service.METRIC_PREFIXES:
+            for suffix in ("p75", "good", "ni", "poor"):
+                row[f"{prefix}_{suffix}"] = p.get(f"{prefix}_{suffix}")
+        rows.append(row)
+
+    bq = _bq()
+    client = _client()
+    table_id = _table_ref("crux_history_weekly")
+    period_ends = [r["period_end"] for r in rows]
+    client.query(
+        f"DELETE FROM `{table_id}` "
+        f"WHERE client_key = @ck AND origin = @origin AND form_factor = @ff "
+        f"AND period_end IN UNNEST(@ends)",
+        job_config=bq.QueryJobConfig(query_parameters=[
+            bq.ScalarQueryParameter("ck", "STRING", client_key),
+            bq.ScalarQueryParameter("origin", "STRING", origin),
+            bq.ScalarQueryParameter("ff", "STRING", form_factor),
+            bq.ArrayQueryParameter("ends", "DATE", period_ends),
+        ]),
+    ).result(timeout=120)
+    client.load_table_from_json(
+        rows, table_id,
+        job_config=bq.LoadJobConfig(schema=_schema_crux_history(bq), write_disposition="WRITE_APPEND"),
+    ).result(timeout=180)
+
+    _log.info("CrUX history synced [%s/%s/%s]: %d periods", client_key, origin, form_factor, len(rows))
+    return {"total_rows": len(rows), "errors": {}}
+
+
+def _fetch_crux_history(
+    client, bq, *, project: str, client_key: str, strategy: str
+) -> list[dict[str, Any]]:
+    """Read the stored CrUX weekly series for the Site Performance pane.
+
+    Returns [] rather than raising when the table doesn't exist yet — clients
+    connected before CrUX shipped have no such table until their next sync, and
+    that must not take the whole PageSpeed endpoint down with it.
+    """
+    import crux_service
+
+    cols = ["origin", "period_start", "period_end"]
+    for prefix in crux_service.METRIC_PREFIXES:
+        cols.extend([f"{prefix}_p75", f"{prefix}_good", f"{prefix}_ni", f"{prefix}_poor"])
+    select = ", ".join(cols)
+    try:
+        rows = list(client.query(
+            f"SELECT {select} FROM `{project}.{_DEFAULT_PAGESPEED_DATASET}.crux_history_weekly` "
+            f"WHERE client_key = @client_key AND form_factor = @strat "
+            f"ORDER BY period_end ASC LIMIT 260",
+            job_config=bq.QueryJobConfig(query_parameters=[
+                bq.ScalarQueryParameter("client_key", "STRING", client_key),
+                bq.ScalarQueryParameter("strat", "STRING", strategy),
+            ]),
+        ).result(timeout=30))
+    except Exception as exc:
+        _log.info("CrUX history unavailable for %s/%s: %s", client_key, strategy, exc)
+        return []
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        item: dict[str, Any] = {}
+        for col in cols:
+            v = r[col]
+            item[col] = v.isoformat() if hasattr(v, "isoformat") else v
+        out.append(item)
+    return out
+
+
 def fetch_latest_snapshot(
     *,
     client_key: str,
@@ -278,7 +424,20 @@ def fetch_latest_snapshot(
         f"SELECT * FROM {latest_view} WHERE client_key = @client_key AND strategy = @strat LIMIT 1",
         job_config=bq.QueryJobConfig(query_parameters=params),
     ).result(timeout=30))
+    crux_history = _fetch_crux_history(
+        client, bq, project=proj, client_key=client_key, strategy=strategy
+    )
     if not rows:
+        # A Lighthouse audit can fail (PSI 500s are common) while the CrUX read
+        # succeeds — they're separate APIs. Real-user data alone still fills the
+        # field-data section, so serve it rather than showing an empty tab.
+        if crux_history:
+            return {
+                "url": crux_history[-1].get("origin") or "",
+                "strategy": strategy,
+                "history": [],
+                "crux_history": crux_history,
+            }
         return {}
     latest = dict(rows[0].items())
 
@@ -315,4 +474,7 @@ def fetch_latest_snapshot(
     md = latest.get("metric_date")
     out["metric_date"] = md.isoformat() if hasattr(md, "isoformat") else md
     out["history"] = history
+    # Real-user (CrUX) weekly series, backfilled ~6 months on the first sync.
+    # Separate from `history` above, which is our own lab-test accumulation.
+    out["crux_history"] = crux_history
     return out
