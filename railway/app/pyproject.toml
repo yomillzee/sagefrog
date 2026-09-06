@@ -1,0 +1,59 @@
+# Ruff config. There is no packaging metadata here on purpose — this file exists
+# only to give the linter a home, and the app is deployed from a Dockerfile, not
+# installed as a package.
+
+[tool.ruff]
+target-version = "py312"   # matches CI and the runtime image
+# The renderers are long HTML strings; wrapping them would hurt more than it
+# helps, so line length is deliberately not enforced (no E501 below).
+line-length = 200
+
+[tool.ruff.lint]
+# Chosen for signal over completeness. These catch things that are wrong or
+# dead, and almost all of them fix themselves, so the rules can be enforced in
+# CI from day one without a stack of manual edits.
+select = [
+    "F",    # pyflakes — unused imports and names, real mistakes
+    "E4",   # import shadowing / placement errors
+    "E7",   # comparison and statement errors (== None, bare lambdas)
+    "E9",   # syntax and IO errors ruff can detect
+    "W",    # trailing whitespace, missing final newline
+    "B",    # bugbear — mutable defaults, zip without strict, raise without from
+    "UP",   # pyupgrade — the codebase targets 3.12, so use it
+    "C4",   # unnecessary list/dict/set comprehension calls
+    "PIE",  # small redundancies (duplicate startswith, needless spread)
+]
+
+ignore = [
+    # B008 fires on every FastAPI route: Depends(), Query(), Form() and friends
+    # are *supposed* to be called in the default argument — that is how the
+    # framework declares dependencies. It flagged 194 sites here, 192 of them
+    # this idiom. Left on, it would bury the two real findings and teach
+    # everyone to ignore the linter.
+    "B008",
+
+    # The three below are style-only and still have findings, so they are off
+    # for now — the alternative was landing them red, which teaches people to
+    # ignore a failing check. Clear the count, then delete the line.
+    "UP031",  # 16 sites: printf-style % formatting that could be f-strings
+    "E731",   #  5 sites: `f = lambda x: ...` instead of `def`
+    "E402",   #  5 sites: imports below other statements, mostly deliberate
+              #           (they run after load_dotenv or a sys.path insert)
+]
+
+# Deliberately not enabled yet — both are worth having, and both are a large
+# mechanical diff that would swamp any review it landed in:
+#   "I"    import sorting, ~97 files reordered
+#   "SIM"  flake8-simplify, ~107 sites
+# Turn them on in a change of their own, one rule at a time.
+
+[tool.ruff.lint.per-file-ignores]
+# Tests put the app on sys.path before importing it, so their imports cannot sit
+# at the top of the file.
+"tests/*" = ["E402"]
+
+# A compatibility façade: its whole job is to re-export names from the
+# dashboard/ package so older `dashboard_service.foo` imports keep working. To
+# F401 every one of those 73 imports is unused, and `--fix` duly deleted them —
+# which broke callers immediately. The re-exports are the point of the file.
+"dashboard_service.py" = ["F401"]

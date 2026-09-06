@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-06",
+        title="Pages are compressed on the way to the browser",
+        area="Client Dashboards",
+        kind="improved",
+        summary=(
+            "Everything the portal sends is now compressed in transit, which "
+            "cuts a dashboard page by roughly three quarters again on top of "
+            "last change's saving. The difference is most obvious on a phone "
+            "or a hotel connection."
+        ),
+        details=(
+            "Nothing looks or behaves differently — it is the same pages, "
+            "sent more efficiently.",
+            "The tables and charts that load their data after the page opens "
+            "benefit too, not just the page itself.",
+        ),
+    ),
+    Entry(
+        date="2026-09-06",
         title="Dashboards load faster after the first page",
         area="Client Dashboards",
         kind="improved",

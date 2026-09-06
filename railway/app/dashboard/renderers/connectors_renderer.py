@@ -8,7 +8,7 @@ from urllib.parse import quote as _url_quote
 
 import connector_config_store
 import connectors  # noqa: F401 — triggers handler registration
-from connectors.base import CONNECTOR_ORDER, ConnectorHandler, all_handlers, get as get_handler
+from connectors.base import CONNECTOR_ORDER, ConnectorHandler, all_handlers
 from dashboard.renderers.base_layout import render_client_shell_page
 from dashboard.utils.formatting import esc as _esc
 
@@ -818,7 +818,7 @@ def _render_wizard(
           <div class="wizard-actions">
             <button class="btn-primary" onclick="confirmManualAccount()">Continue</button>
           </div>
-          ''' if handler.manual_account_entry else f'''
+          ''' if handler.manual_account_entry else '''
           <div id="accountLoading" style="color:var(--muted);font-size:.9rem">
             <span class="spinner"></span>Loading accounts…
           </div>
@@ -1237,7 +1237,6 @@ def _render_management_view(
         error_row = f'<div class="test-result err" style="margin-bottom:16px">{_esc(config.last_error_message[:300])}</div>'
 
     runs_rows = ""
-    has_running = False
     for run in sync_runs:
         ts = _fmt_dt(run.started_at)
         dur = ""
@@ -1254,7 +1253,6 @@ def _render_management_view(
         status_cls_run = status_map.get(run.status, "")
         err_col = _esc(run.error_message[:60]) if run.error_message else ""
         if run.status == "running":
-            has_running = True
             from urllib.parse import quote as _q
             cancel_url = f"/dashboard/{client_slug}/connectors/{handler.connector_type}/sync/{run.id}/cancel"
             if access_key:
@@ -1283,7 +1281,6 @@ def _render_management_view(
         </div>
         """
 
-    sync_url = f"/dashboard/{client_slug}/connectors/{handler.connector_type}/sync"
     disconnect_form = f"""
       <form id="disconnectForm" method="POST" action="/dashboard/{client_slug}/connectors/{handler.connector_type}/disconnect" style="display:none"></form>
     """
@@ -1514,8 +1511,7 @@ def _fmt_dt(dt: datetime | None) -> str:
     now = datetime.now(tz=UTC)
     try:
         if dt.tzinfo is None:
-            from datetime import timezone
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         diff = now - dt
         secs = int(diff.total_seconds())
         if secs < 60:

@@ -370,8 +370,8 @@ def scan_pages(urls: list[str], *, tags: list[str] | None = None) -> dict[str, A
 def aggregate(scan: dict[str, Any]) -> dict[str, Any]:
     """Roll per-page axe results up into client-level scoping numbers."""
     pages = scan.get("pages") or []
-    totals = {k: 0 for k in IMPACT_ORDER}
-    node_totals = {k: 0 for k in IMPACT_ORDER}
+    totals = dict.fromkeys(IMPACT_ORDER, 0)
+    node_totals = dict.fromkeys(IMPACT_ORDER, 0)
     incomplete_total = 0
     # rule id -> {impact, help, helpUrl, pages: set, rule_instances, nodes}
     rules: dict[str, dict[str, Any]] = {}

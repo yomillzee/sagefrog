@@ -221,17 +221,17 @@ class CommentNotificationRoutingTests(unittest.TestCase):
         page_comments._thread_participants = self._participants
 
     def _comment(self, **over) -> page_comments.Comment:
-        base = dict(
-            id=5,
-            client_slug="acme",
-            page_key="/dashboard/acme",
-            page_path="/dashboard/acme?view=analytics",
-            page_label="Website Analytics",
-            body="This number looks off.",
-            parent_id=None,
-            created_at="2026-08-26T12:00:00+00:00",
-            created_by="sam@sagefrog.com",
-        )
+        base = {
+            "id": 5,
+            "client_slug": "acme",
+            "page_key": "/dashboard/acme",
+            "page_path": "/dashboard/acme?view=analytics",
+            "page_label": "Website Analytics",
+            "body": "This number looks off.",
+            "parent_id": None,
+            "created_at": "2026-08-26T12:00:00+00:00",
+            "created_by": "sam@sagefrog.com",
+        }
         base.update(over)
         return page_comments.Comment(**base)
 
@@ -302,20 +302,20 @@ class RouteGateTests(unittest.TestCase):
 
 class InboxRenderTests(unittest.TestCase):
     def _note(self, **over) -> notifications.Notification:
-        base = dict(
-            id=3,
-            recipient_email="kelly@sagefrog.com",
-            kind="comment",
-            client_slug="acme",
-            page_path="/dashboard/acme?view=analytics",
-            page_label="Website Analytics",
-            title="Sam commented on Website Analytics",
-            body="<script>alert(1)</script>",
-            actor_email="sam@sagefrog.com",
-            comment_id=5,
-            created_at="2026-08-26T12:00:00+00:00",
-            read_at=None,
-        )
+        base = {
+            "id": 3,
+            "recipient_email": "kelly@sagefrog.com",
+            "kind": "comment",
+            "client_slug": "acme",
+            "page_path": "/dashboard/acme?view=analytics",
+            "page_label": "Website Analytics",
+            "title": "Sam commented on Website Analytics",
+            "body": "<script>alert(1)</script>",
+            "actor_email": "sam@sagefrog.com",
+            "comment_id": 5,
+            "created_at": "2026-08-26T12:00:00+00:00",
+            "read_at": None,
+        }
         base.update(over)
         return notifications.Notification(**base)
 

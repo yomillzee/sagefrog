@@ -265,11 +265,7 @@ class WiringTests(unittest.TestCase):
         original = base_layout.platform_nav_flags
         try:
             def flags(_slug, *, show):
-                base = {k: False for k in (
-                    "show_connectors", "show_lead_tracking", "show_email_performance",
-                    "show_linkedin_organic", "show_bluesky", "show_gsc", "show_gtm",
-                    "show_pagespeed", "show_semrush", "show_consent", "show_web_mentions",
-                )}
+                base = dict.fromkeys(("show_connectors", "show_lead_tracking", "show_email_performance", "show_linkedin_organic", "show_bluesky", "show_gsc", "show_gtm", "show_pagespeed", "show_semrush", "show_consent", "show_web_mentions"), False)
                 base["_connector_read_ok"] = True
                 base["show_web_mentions"] = show
                 return base

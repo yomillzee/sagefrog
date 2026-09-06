@@ -17,7 +17,7 @@ for _name in ("httpx", "db", "db_cache", "oauth_flows", "oauth_store"):
     if _name not in sys.modules:
         sys.modules[_name] = types.ModuleType(_name)
 
-from datetime import datetime, timezone  # noqa: E402
+from datetime import datetime, UTC  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
@@ -110,7 +110,7 @@ class CacheBehaviourTest(unittest.TestCase):
     def test_cache_hit_skips_harvest_pull_and_applies_goals_and_tags(self):
         hit = SimpleNamespace(
             response_json=self._cached_clients(),
-            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
         )
         with patch.object(harvest_service, "is_connected", return_value=True), \
              patch.object(harvest_service, "_account_id", return_value="acct-1"), \
@@ -147,7 +147,7 @@ class CacheBehaviourTest(unittest.TestCase):
         project leaves the client's card and is paced on its own."""
         hit = SimpleNamespace(
             response_json=self._cached_clients(),
-            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
         )
         with patch.object(harvest_service, "is_connected", return_value=True), \
              patch.object(harvest_service, "_account_id", return_value="acct-1"), \
@@ -193,7 +193,7 @@ class CacheBehaviourTest(unittest.TestCase):
     def test_client_with_every_project_separated_shows_no_aggregate_card(self):
         hit = SimpleNamespace(
             response_json=self._cached_clients(),
-            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
         )
         with patch.object(harvest_service, "is_connected", return_value=True), \
              patch.object(harvest_service, "_account_id", return_value="acct-1"), \
@@ -222,7 +222,7 @@ class CacheBehaviourTest(unittest.TestCase):
     def test_owner_applied_fresh_onto_each_client(self):
         hit = SimpleNamespace(
             response_json=self._cached_clients(),
-            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
         )
         with patch.object(harvest_service, "is_connected", return_value=True), \
              patch.object(harvest_service, "_account_id", return_value="acct-1"), \

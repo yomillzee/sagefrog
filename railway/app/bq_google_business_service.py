@@ -24,7 +24,7 @@ import contextlib
 import contextvars
 import logging
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ def sync_google_business_to_bq(
     import google_business_service as gbs
 
     ensure_tables()
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     bq = _bq()
     client = _client()
 
@@ -298,7 +298,7 @@ def _empty_summary() -> dict[str, Any]:
     import google_business_service as gbs
 
     return {
-        "totals": {col: 0 for col in gbs.METRIC_COLUMNS},
+        "totals": dict.fromkeys(gbs.METRIC_COLUMNS, 0),
         "daily": [],
         "locations": [],
         "reviews": {"average_rating": None, "total": 0, "unanswered": 0, "recent": []},

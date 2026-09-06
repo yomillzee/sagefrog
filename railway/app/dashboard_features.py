@@ -160,7 +160,7 @@ def resolve_features(
     resolved = _features_from_mapping(stored, base=base)
 
     fk = _filter_kwargs(slug, cfg=cfg, label=label, ga4_client_key=ga4_client_key)
-    profile = client_filter_profile(slug, **fk)
+    client_filter_profile(slug, **fk)
     segment_ok = client_has_segment_filters(slug, **fk)
     product_ok = client_has_product_line_filters(slug, **fk)
 

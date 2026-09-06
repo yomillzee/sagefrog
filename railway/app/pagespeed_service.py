@@ -41,7 +41,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -284,7 +284,7 @@ def fetch_scores(url: str, strategy: str | None = None, *, timeout: int | None =
         "url": target,
         "strategy": strat,
         "final_url": lh.get("finalUrl") or target,
-        "fetched_at": datetime.now(tz=timezone.utc).isoformat(),
+        "fetched_at": datetime.now(tz=UTC).isoformat(),
     }
 
     got_any_score = False

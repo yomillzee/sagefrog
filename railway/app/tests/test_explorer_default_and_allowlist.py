@@ -24,11 +24,11 @@ class _FakeConn:
 
 
 def _fake_row(**overrides):
-    base = dict(
-        client_slug="acme", label="Acme",
-        google_customer_id=None, linkedin_account_id=None,
-        meta_account_id=None, ga4_client_key=None,
-    )
+    base = {
+        "client_slug": "acme", "label": "Acme",
+        "google_customer_id": None, "linkedin_account_id": None,
+        "meta_account_id": None, "ga4_client_key": None,
+    }
     base.update(overrides)
     return cdc.ClientConfigRow(**base)
 

@@ -39,7 +39,7 @@ class NixonPacingConfigSlugTests(unittest.TestCase):
         def _fake_compute(*, monthly_budget, daily_spend, today, active_weekdays_override):
             captured["budget"] = monthly_budget
             captured["override"] = active_weekdays_override
-            return types.SimpleNamespace(to_dict=lambda: {})
+            return types.SimpleNamespace(to_dict=dict)
 
         cdc = importlib.import_module("client_dashboard_config")
         with patch.object(api_routes, "_summary_read", return_value={"daily": []}), \

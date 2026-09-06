@@ -76,7 +76,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         from dashboard.renderers.bigquery_settings_renderer import render_bigquery_settings_page
         from dashboard.renderers.base_layout import render_client_shell_page
         from dashboard.renderers.gtm_renderer import render_gtm_page
-        kw = dict(access_key="k", session_is_admin=True, session_email="admin@sf.com")
+        kw = {'access_key': "k", 'session_is_admin': True, 'session_email': "admin@sf.com"}
         return {
             # Event Tracking is a standalone page and used to hand-roll its own
             # section nav, which is how it drifted out of step with every other
@@ -239,7 +239,7 @@ class SidebarConsistencyTests(unittest.TestCase):
         )
         for key in cdc.SIDEBAR_TOGGLEABLE_TABS:
             self.assertRegex(
-                html, r'class="dash-tab-toggle" data-tab="%s"' % re.escape(key),
+                html, rf'class="dash-tab-toggle" data-tab="{re.escape(key)}"',
                 f"Advanced tab missing a toggle for '{key}'",
             )
         # The newly-added standalone pages are represented.

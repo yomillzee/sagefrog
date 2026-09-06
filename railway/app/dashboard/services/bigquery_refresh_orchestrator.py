@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 LOGGER = logging.getLogger(__name__)
 

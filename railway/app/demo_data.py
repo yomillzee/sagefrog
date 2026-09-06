@@ -304,10 +304,10 @@ def _build_marketing(payload: dict) -> dict:
         m = _sum_metrics(rows)
         by_source.append({"source": source, **m})
         for r in rows:
-            daily_trend.append({"date": r["date"], "source": source, **{
+            daily_trend.append({"date": r["date"], "source": source,
                 "spend": r["spend"], "impressions": r["impressions"], "clicks": r["clicks"],
-                "conversions": r["conversions"], "conversion_value": r["conversion_value"],
-            }})
+                "conversions": r["conversions"], "conversion_value": r["conversion_value"]
+            })
     by_source.sort(key=lambda r: r["spend"], reverse=True)
     daily_trend.sort(key=lambda r: (r["date"], r["source"]))
 
@@ -509,7 +509,7 @@ def _build_landing_pages(payload: dict) -> dict:
     start, end = _dates(payload)
     days = max(1, (end - start).days + 1)
     rows = []
-    for path, topic, _group in _PAGES:
+    for path, _topic, _group in _PAGES:
         sessions = int((60 + 900 * _u("land", path)) * days / 10)
         users = int(sessions * (0.7 + 0.25 * _u("landu", path)))
         new_users = int(users * (0.5 + 0.35 * _u("landn", path)))
@@ -1251,7 +1251,7 @@ def _build_gsc_keyword_matches(payload: dict) -> list[dict]:
     """Rows shape (a LIST) for branded/target keyword matching."""
     start, end = _dates(payload)
     terms = payload.get("terms") or []
-    base_terms = [t for t in terms] if isinstance(terms, list) else []
+    base_terms = list(terms) if isinstance(terms, list) else []
     queries = base_terms or [
         "northwind health", "northwind urgent care", "northwind telehealth",
         "northwind occupational health", "northwind health philadelphia",

@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 from uuid import uuid4
 
@@ -168,7 +168,7 @@ def normalize_objects(value: Any) -> dict[str, bool]:
         # of them" — an all-off selection is rejected at the save route instead.
         picked = {}
     if not picked:
-        return {k: True for k in _SYNC_OBJECT_KEYS}
+        return dict.fromkeys(_SYNC_OBJECT_KEYS, True)
     # A key the caller didn't mention is off: the UI always posts all three, so a
     # partial mapping means the missing ones were deselected.
     return {k: picked.get(k, False) for k in _SYNC_OBJECT_KEYS}
@@ -393,7 +393,7 @@ def _epoch_ms_to_iso(v: Any) -> str | None:
         ms = int(v)
     except (TypeError, ValueError):
         return str(v)  # already an ISO-8601 string
-    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    return datetime.fromtimestamp(ms / 1000.0, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
 
 
 def _parse_contact_row(result: dict[str, Any], synced_at: str, *, stage: str, date_property: str) -> dict[str, Any]:
@@ -779,8 +779,8 @@ def sync_hubspot_contacts(
         partition_field="lastmodifieddate", clustering_fields=["lifecyclestage", "contact_id"],
     )
 
-    cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp() * 1000)
-    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    cutoff_ms = int((datetime.now(UTC) - timedelta(days=lookback_days)).timestamp() * 1000)
+    synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
 
     LOGGER.info("HubSpot contacts sync — stage=%s, lookback=%dd, project=%s, dataset=%s",
                 stage, lookback_days, project, dataset)
@@ -859,8 +859,8 @@ def sync_hubspot_deals(
         partition_field="createdate", clustering_fields=["pipeline", "dealstage"],
     )
 
-    cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp() * 1000)
-    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    cutoff_ms = int((datetime.now(UTC) - timedelta(days=lookback_days)).timestamp() * 1000)
+    synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
 
     LOGGER.info("HubSpot deals sync — lookback=%dd, project=%s, dataset=%s",
                 lookback_days, project, dataset)
@@ -944,7 +944,7 @@ def sync_hubspot_emails(
     token  = (access_token or "").strip() or _token()
     client = bq_client or bigquery_service.build_client(project_id=project)
 
-    synced_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    synced_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
     LOGGER.info("HubSpot emails sync — project=%s, dataset=%s", project, dataset)
     t0 = time.monotonic()
     rows: list[dict[str, Any]] = []

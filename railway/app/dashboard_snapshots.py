@@ -7,7 +7,6 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-import psycopg
 import db
 
 SCHEMA_SQL_STATEMENTS = [

@@ -8,7 +8,6 @@ import threading
 from datetime import UTC, datetime
 from typing import Any
 
-import psycopg
 import db
 
 import db_migrate

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date
 from pathlib import Path
@@ -11,10 +12,10 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 import bigquery_service
 import dashboard_snapshots
-import dashboard_service
 from dashboard.routes import register_dashboard_routes
 from dashboard.utils.dates import WAREHOUSE_DATE_RANGES
 import ga4_warehouse_service
@@ -28,10 +29,8 @@ from auth import creds_fingerprint, env_summary
 from linkedin_auth import env_summary as linkedin_env_summary
 from meta_auth import env_summary as meta_env_summary
 from indeed_auth import env_summary as indeed_env_summary
-from cron_security import require_cron_secret
 from security import configured_api_key, is_production, require_api_key
 import audit_log
-import client_config
 import feature_requests
 import client_dashboard_config
 import dashboard_registry
@@ -40,8 +39,6 @@ import client_insight_documents
 import dashboard_settings
 import ga4_credentials
 import railway_api
-import dashboard_features
-import dashboard_theme
 import login_rate_limit
 import not_found_page
 import connector_config_store
@@ -128,6 +125,43 @@ from indeed_models import (
 
 
 load_dotenv()
+
+
+def _configure_logging() -> None:
+    """Give the app's loggers somewhere to write.
+
+    Every module here does ``logging.getLogger(__name__)``, but nothing ever
+    configured the root logger. Uvicorn only sets up its own ``uvicorn.*``
+    loggers, so ours inherited the default level of WARNING with no handler
+    attached — which silently discarded every ``log.info`` and ``log.debug`` in
+    the codebase (133 call sites: sync progress, GTM quota decisions, cache
+    hits). Warnings and errors made it out only via logging's last-resort
+    handler, without timestamps.
+
+    LOG_LEVEL overrides the default; set it to DEBUG when chasing something.
+    ``force=True`` because a dependency importing logging first would otherwise
+    win and this call would quietly do nothing.
+    """
+    level = (os.getenv("LOG_LEVEL") or "INFO").strip().upper()
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+        force=True,
+    )
+    # Turning INFO on globally also turns it on for our dependencies, and a few
+    # of them narrate every HTTP call — httpx alone would log a line per request
+    # to every Google/LinkedIn/Meta endpoint, burying the app's own output. Hold
+    # those at WARNING; LOG_LEVEL=DEBUG still overrides everything below.
+    if level != "DEBUG":
+        for noisy in (
+            "httpx", "httpcore", "urllib3", "asyncio", "charset_normalizer",
+            "google", "google.auth", "google.api_core", "google_auth_httplib2",
+        ):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+_configure_logging()
 
 
 def _production_hide_api_docs() -> bool:
@@ -344,6 +378,17 @@ async def _csrf_protect(request: Request, call_next):
     return await call_next(request)
 
 
+# Compress responses on the way out. Added before the session middleware so it
+# ends up outermost and compresses whatever the inner layers produced.
+#
+# The dashboard page itself is no longer the main beneficiary — moving its CSS
+# and JS into cached assets took it from 584 KB to 96 KB — but the JSON the
+# explorer and the analytics panes fetch is still sizeable and highly
+# compressible, as are the asset responses themselves on a cold cache.
+# minimum_size skips the small JSON replies where a compression pass costs more
+# than it saves.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 if web_users.enabled():
     try:
         web_auth.add_session_middleware(app)
@@ -433,12 +478,7 @@ def custom_openapi() -> dict:
     }
     for path, item in schema.get("paths", {}).items():
         if not (
-            path.startswith("/google-ads")
-            or path.startswith("/linkedin")
-            or path.startswith("/meta")
-            or path.startswith("/ga4")
-            or path.startswith("/indeed")
-            or path.startswith("/warehouse")
+            path.startswith(("/google-ads", "/linkedin", "/meta", "/ga4", "/indeed", "/warehouse"))
         ):
             continue
         for method in ("get", "post", "put", "delete", "patch"):
@@ -604,7 +644,7 @@ def indeed_job_postings(body: IndeedJobPostingsRequest) -> IndeedJobPostingsResp
             count=int(hit.row_count or len(rows)),
             postings=[IndeedJobPostingRef(**r) for r in rows],
         )
-    
+
     try:
         rows = indeed_service.list_job_postings(
             account_id=body.account_id,
@@ -613,7 +653,7 @@ def indeed_job_postings(body: IndeedJobPostingsRequest) -> IndeedJobPostingsResp
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    
+
     try:
         db_cache.put_cached(
             "indeed.postings",
@@ -626,7 +666,7 @@ def indeed_job_postings(body: IndeedJobPostingsRequest) -> IndeedJobPostingsResp
         )
     except Exception:
         pass
-    
+
     return IndeedJobPostingsResponse(
         count=len(rows),
         postings=[IndeedJobPostingRef(**r) for r in rows],
@@ -644,18 +684,18 @@ def indeed_job_posting_detail(posting_id: str) -> IndeedJobPostingDetailsRespons
     posting_id = posting_id.strip()
     if not posting_id:
         raise HTTPException(status_code=400, detail="posting_id is required")
-    
+
     cache_payload = {"posting_id": posting_id}
     hit = db_cache.get_cached("indeed.posting_detail", cache_payload)
     if hit is not None:
         payload = hit.response_json or {}
         return IndeedJobPostingDetailsResponse(**payload)
-    
+
     try:
         payload = indeed_service.get_job_posting(posting_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    
+
     try:
         db_cache.put_cached(
             "indeed.posting_detail",
@@ -668,7 +708,7 @@ def indeed_job_posting_detail(posting_id: str) -> IndeedJobPostingDetailsRespons
         )
     except Exception:
         pass
-    
+
     return IndeedJobPostingDetailsResponse(**payload)
 
 
@@ -691,7 +731,7 @@ def indeed_registration_analytics(body: IndeedAnalyticsRequest) -> IndeedRegistr
     if hit is not None:
         payload = hit.response_json or {}
         return IndeedRegistrationAnalyticsResponse(**payload)
-    
+
     try:
         payload = indeed_service.get_registration_analytics(
             posting_id=body.posting_id,
@@ -701,7 +741,7 @@ def indeed_registration_analytics(body: IndeedAnalyticsRequest) -> IndeedRegistr
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    
+
     try:
         db_cache.put_cached(
             "indeed.analytics",
@@ -714,7 +754,7 @@ def indeed_registration_analytics(body: IndeedAnalyticsRequest) -> IndeedRegistr
         )
     except Exception:
         pass
-    
+
     return IndeedRegistrationAnalyticsResponse(**payload)
 
 
@@ -3349,7 +3389,7 @@ async def oauth_connect(platform: str, request: Request, return_to: str = "/admi
     slug = platform.strip().lower().replace("-", "_")
     if slug not in oauth_flows.PLATFORMS:
         raise HTTPException(status_code=404, detail="Unknown OAuth platform.")
-    user = await web_auth.require_admin(request)
+    await web_auth.require_admin(request)
     dest = oauth_flows.validate_return_to(return_to)
     prereq = oauth_flows.connect_prerequisites(slug)
     if not prereq.get("ready"):

@@ -29,7 +29,7 @@ import contextlib
 import contextvars
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, UTC
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -260,7 +260,7 @@ def sync_bluesky_to_bq(
 
     ensure_bluesky_tables()
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     today = date.today().isoformat()
 
     snapshot = bluesky_service.build_bluesky_snapshot(handle, since=start, until=end)

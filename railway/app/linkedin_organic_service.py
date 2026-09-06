@@ -23,12 +23,11 @@ in the deployed environment before relying on any single field.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, UTC
 from typing import Any
 from urllib.parse import quote
 
 import linkedin_taxonomy
-from dates_util import resolve_date_range
 from linkedin_auth import LinkedInEnv, load_linkedin_env
 from linkedin_service import (
     _linkedin_get,
@@ -73,7 +72,7 @@ def _urn_type(urn: str) -> str:
 
 def _epoch_ms(value: date) -> int:
     """Midnight-UTC epoch milliseconds for a date (LinkedIn timeRange unit)."""
-    dt = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    dt = datetime(value.year, value.month, value.day, tzinfo=UTC)
     return int(dt.timestamp() * 1000)
 
 
@@ -84,7 +83,7 @@ def _date_from_epoch_ms(value: Any) -> date | None:
         return None
     if ms <= 0:
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date()
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).date()
 
 
 def _time_intervals(start: date, end: date) -> str:
@@ -826,7 +825,7 @@ _PAGE_VIEW_BUCKETS = {
 
 def _page_view_breakdown(views: dict[str, Any]) -> dict[str, int]:
     """Pull the desktop/mobile + per-section view counts out of ``views``."""
-    out = {col: 0 for col in _PAGE_VIEW_BUCKETS.values()}
+    out = dict.fromkeys(_PAGE_VIEW_BUCKETS.values(), 0)
     for key, col in _PAGE_VIEW_BUCKETS.items():
         section = (views or {}).get(key)
         if isinstance(section, dict):

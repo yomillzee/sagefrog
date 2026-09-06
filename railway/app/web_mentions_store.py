@@ -684,7 +684,7 @@ def dedupe_hash(*, alert_id: int, url: str, title: str) -> str:
     being mentioned, which is what share of mentions counts.
     """
     key = (url or "").strip().lower() or f"title:{(title or '').strip().lower()}"
-    return hashlib.sha256(f"{int(alert_id)}|{key}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{int(alert_id)}|{key}".encode()).hexdigest()
 
 
 def insert_mentions(client_slug: str, alert: Alert, entries: list[dict[str, Any]]) -> int:

@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 import bigquery_service
@@ -946,7 +946,7 @@ def nixon_meta_debug_insights(
     days: int = Query(default=7, description="How many trailing days to probe"),
 ) -> dict:
     web_auth.authenticate_dashboard_api_any(request, client_slugs=_NIXON_ACCESS_SLUGS)
-    import oauth_store, meta_service
+    import oauth_store
     from datetime import date, timedelta
     from meta_auth import load_meta_env
 
@@ -962,7 +962,6 @@ def nixon_meta_debug_insights(
     account_id = "3566409366740666"
 
     try:
-        import json as _json
         from meta_service import _act_id, _normalize_account_id, _time_range, _INSIGHT_FIELDS, _ADSET_INSIGHT_FIELDS, _AD_INSIGHT_FIELDS
 
         field_map = {
@@ -3637,7 +3636,7 @@ def ga4_provision_views(
     raw_dataset_id = cfg.raw_dataset_id or "raw_ga4"
 
     # Optional ?views= filter (comma-separated view names)
-    from urllib.parse import parse_qs, urlparse
+    from urllib.parse import parse_qs
     qs = parse_qs(str(request.url.query))
     requested_views_raw = qs.get("views", [""])[0]
     requested_views = [v.strip() for v in requested_views_raw.split(",") if v.strip()] or None

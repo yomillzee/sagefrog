@@ -15,7 +15,7 @@ import contextlib
 import contextvars
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -721,7 +721,7 @@ def sync_google_ads_to_bq(
         client_key, customer_id_clean, start, end, _dataset_id(),
     )
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     errors: dict[str, str] = {}
 
     # Campaign-level daily metrics

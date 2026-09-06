@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
-from typing import Mapping
+from collections.abc import Mapping
 
 from dashboard.utils.dates import mtd_calendar_bounds
 

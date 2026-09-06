@@ -339,7 +339,7 @@ class GtmContainerCacheTests(_GtmTestCase):
         self.assertEqual(result, [{"id": "1:2", "name": "Cont (Acct) • GTM-X"}])
 
     def test_expired_cache_refetches(self):
-        from datetime import UTC, datetime, timedelta
+        from datetime import timedelta
 
         client = _FakeClient(_accounts_fanout_responses() + _accounts_fanout_responses())
         with patch.object(gtm_service, "_get_access_token", return_value="tok"), \

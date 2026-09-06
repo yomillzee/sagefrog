@@ -375,7 +375,7 @@ async def connector_configure(
     ctype = connector_type.strip().lower()
     handler = get_handler(ctype)
     if not handler:
-        return JSONResponse({"ok": False, "error": f"Unknown connector."}, status_code=404)
+        return JSONResponse({"ok": False, "error": "Unknown connector."}, status_code=404)
 
     redirect, access_key, use_session, session_email, session_is_admin = _auth(request, slug)
     if redirect:
@@ -621,7 +621,7 @@ async def connector_sync_options(
         options = {"lifecycle_stage": stage, "lookback_days": lookback, "sync_objects": objects}
     else:
         # Generic: store whatever JSON-able options were posted.
-        options = {k: v for k, v in (body or {}).items()}
+        options = dict((body or {}).items())
 
     connector_config_store.set_sync_options(slug, ctype, _json.dumps(options))
     return JSONResponse({"ok": True, "sync_options": options})

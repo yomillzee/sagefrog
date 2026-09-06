@@ -17,7 +17,6 @@ import os
 import threading
 import time
 from datetime import UTC, datetime
-from typing import Any
 
 import db
 

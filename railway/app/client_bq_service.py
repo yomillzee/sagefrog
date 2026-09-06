@@ -469,7 +469,7 @@ def fetch_pages_sources(
 # BQ mart provisioning
 # ---------------------------------------------------------------------------
 
-def _bq_field(name: str, field_type: str) -> "bigquery.SchemaField":
+def _bq_field(name: str, field_type: str) -> bigquery.SchemaField:
     from google.cloud import bigquery as _bq
     return _bq.SchemaField(name, field_type, mode="NULLABLE")
 

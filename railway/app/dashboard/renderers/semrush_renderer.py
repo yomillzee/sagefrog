@@ -184,7 +184,7 @@ def semrush_section_html(data: dict[str, Any]) -> str:
     # ── Charts ────────────────────────────────────────────────────────────
     pos_json = _safe_json(pos_dist)
     series_json = _safe_json(series)
-    charts_html = f"""
+    charts_html = """
     <div class="smr-charts-row">
       <div class="smr-chart-card">
         <div class="smr-chart-title">Keyword Position Distribution</div>

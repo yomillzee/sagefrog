@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from datetime import UTC
 
 _BASE_URL = "https://api.semrush.com/"
 _BASE_URL_V1 = "https://api.semrush.com/analytics/v1/"
@@ -449,7 +450,7 @@ def build_semrush_snapshot(
     backlinks.pop("_raw_keys", None)
     overview.pop("_raw_keys", None)
 
-    from datetime import datetime, timezone
+    from datetime import datetime
     result: dict[str, Any] = {
         "domain": domain,
         "database": db,
@@ -458,7 +459,7 @@ def build_semrush_snapshot(
         "backlinks": backlinks,
         "ai_overview": ai_overview,
         "position_distribution": position_dist,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(UTC).isoformat(),
     }
     if errors:
         result["errors"] = errors
