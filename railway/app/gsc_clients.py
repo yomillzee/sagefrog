@@ -15,9 +15,12 @@ BQ_MART_DATASET_ID), so Penn keeps working with zero config changes.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT = "penn-community-b-1699391543298"
 _DEFAULT_MART_DATASET = "marketing_marts"
@@ -124,8 +127,10 @@ def load_client_registry() -> dict[str, GscClientTarget]:
                 native_dataset_id=row.native_dataset_id,
                 label=row.label or slug,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Only the env-configured clients remain, so a client that exists solely
+        # in the registry disappears from the Search Console list.
+        log.warning("could not load Search Console clients from the registry: %s", exc)
     return out
 
 

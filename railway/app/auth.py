@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 # Railway / local: supports GOOGLE_ADS_* (preferred) or GOOGLE_* (linkedin-ads-dashboard style)
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
@@ -64,8 +67,10 @@ def _resolve_refresh_token() -> str:
         db_token = oauth_store.get_refresh_token("google_ads")
         if db_token:
             return db_token
-    except Exception:
-        pass
+    except Exception as exc:
+        # Falls through to the environment variable below, which is the normal
+        # path when tokens are not stored in the database.
+        log.debug("no stored google_ads refresh token: %s", exc)
     raise RuntimeError(
         "Missing Google Ads refresh token. Connect Google Ads in dashboard settings "
         "(Settings → Connect Google Ads)."

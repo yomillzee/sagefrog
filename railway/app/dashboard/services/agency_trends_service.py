@@ -571,13 +571,10 @@ def cached_client_summary(
         client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
     ):
         result = marketing_service.fetch_summary(start_date=start, end_date=end)
-    try:
-        db_cache.put_cached(
-            f"{slug}.trends.summary", payload, response_json=result,
-            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        f"{slug}.trends.summary", payload, response_json=result,
+        row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+    )
     return result or {}
 
 
@@ -600,13 +597,10 @@ def cached_client_sessions(
         client_key=slug, project_id=project_id, mart_dataset_id=dataset_id
     ):
         result = marketing_service.fetch_sessions_daily(start_date=start, end_date=end)
-    try:
-        db_cache.put_cached(
-            f"{slug}.hq.sessions_daily", payload, response_json=result,
-            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        f"{slug}.hq.sessions_daily", payload, response_json=result,
+        row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+    )
     return result or {}
 
 
@@ -706,13 +700,10 @@ def _client_mqls(*, slug: str, start: date, end: date) -> int | None:
 
     import hubspot_reports_service
     count = hubspot_reports_service.fetch_mtd_mql_count(slug, start=start, end=end)
-    try:
-        db_cache.put_cached(
-            f"{slug}.hq.mtd_mqls", payload, response_json={"mqls": count},
-            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        f"{slug}.hq.mtd_mqls", payload, response_json={"mqls": count},
+        row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+    )
     return count
 
 
@@ -870,11 +861,8 @@ def build_agency_overview(
             "include_today": bool(include_today),
         },
     }
-    try:
-        db_cache.put_cached(
-            _OVERVIEW_CACHE_SOURCE, cache_key, response_json=result,
-            row_count=len(result["clients"]), ttl_seconds=_CACHE_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        _OVERVIEW_CACHE_SOURCE, cache_key, response_json=result,
+        row_count=len(result["clients"]), ttl_seconds=_CACHE_TTL_SECONDS,
+    )
     return result

@@ -851,8 +851,11 @@ def _replace_object_with_view(client: Any, object_id: str, select_sql: str) -> N
         existing = client.get_table(object_id)
         if str(getattr(existing, "table_type", "TABLE")).upper() == "TABLE":
             client.delete_table(object_id, not_found_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Usually just "not there yet", which is fine — the CREATE below handles
+        # it. Logged at debug because a permission error lands here too, and then
+        # the CREATE fails for a reason this line explains.
+        _log.debug("could not inspect %s before replacing it: %s", object_id, exc)
     client.query(f"CREATE OR REPLACE VIEW `{object_id}` AS\n{select_sql}").result()
 
 
@@ -1094,8 +1097,8 @@ def rebuild_linkedin_campaign_daily_mart() -> dict[str, Any]:
         existing = client.get_table(table_id)
         if str(getattr(existing, "table_type", "")).upper() == "TABLE":
             client.delete_table(table_id, not_found_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("could not inspect %s before replacing it: %s", table_id, exc)
     client.query(sql).result()
     return {"enabled": True, "table": table_id, "object_type": "view"}
 
@@ -1411,8 +1414,11 @@ def _ensure_meta_table(table_name: str, schema: list[Any]) -> str:
         if not field_names.issubset(existing_cols):
             obj = bigquery.Table(table_id, schema=schema)
             client.update_table(obj, ["schema"])
-    except Exception:
-        pass  # Table doesn't exist yet — create below.
+    except Exception as exc:
+        # Usually "not there yet" — the create below handles it. At debug because
+        # a rejected update_table lands here too, and then the columns silently
+        # never get added.
+        _log.debug("schema check for %s did not complete: %s", table_id, exc)
 
     table = bigquery.Table(table_id, schema=schema)
     if "metric_date" in field_names:
@@ -2634,7 +2640,7 @@ def create_linkedin_organic_post_mart_view() -> dict[str, Any]:
         existing = client.get_table(table_id)
         if str(getattr(existing, "table_type", "")).upper() == "TABLE":
             client.delete_table(table_id, not_found_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("could not inspect %s before replacing it: %s", table_id, exc)
     client.query(sql).result()
     return {"enabled": True, "table": table_id, "object_type": "view"}

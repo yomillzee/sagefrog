@@ -126,6 +126,8 @@ from indeed_models import (
 
 load_dotenv()
 
+log = logging.getLogger(__name__)
+
 
 def _configure_logging() -> None:
     """Give the app's loggers somewhere to write.
@@ -654,18 +656,15 @@ def indeed_job_postings(body: IndeedJobPostingsRequest) -> IndeedJobPostingsResp
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    try:
-        db_cache.put_cached(
-            "indeed.postings",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-            ttl_seconds=3600,  # Cache for 1 hour
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "indeed.postings",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+        ttl_seconds=3600,  # Cache for 1 hour
+    )
 
     return IndeedJobPostingsResponse(
         count=len(rows),
@@ -696,18 +695,15 @@ def indeed_job_posting_detail(posting_id: str) -> IndeedJobPostingDetailsRespons
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    try:
-        db_cache.put_cached(
-            "indeed.posting_detail",
-            cache_payload,
-            response_json=payload,
-            row_count=1,
-            status="ok",
-            error=None,
-            ttl_seconds=3600,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "indeed.posting_detail",
+        cache_payload,
+        response_json=payload,
+        row_count=1,
+        status="ok",
+        error=None,
+        ttl_seconds=3600,
+    )
 
     return IndeedJobPostingDetailsResponse(**payload)
 
@@ -742,18 +738,15 @@ def indeed_registration_analytics(body: IndeedAnalyticsRequest) -> IndeedRegistr
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    try:
-        db_cache.put_cached(
-            "indeed.analytics",
-            cache_payload,
-            response_json=payload,
-            row_count=payload.get("posting_count", 0),
-            status="ok",
-            error=None,
-            ttl_seconds=3600,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "indeed.analytics",
+        cache_payload,
+        response_json=payload,
+        row_count=payload.get("posting_count", 0),
+        status="ok",
+        error=None,
+        ttl_seconds=3600,
+    )
 
     return IndeedRegistrationAnalyticsResponse(**payload)
 
@@ -817,17 +810,14 @@ def google_ads_search(body: SearchRequest) -> SearchResponse:
         rows = google_ads_service.search(customer_id=body.customer_id, query=body.query)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "google_ads.search",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "google_ads.search",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+    )
     return SearchResponse(customer_id=body.customer_id, row_count=len(rows), rows=rows)
 
 
@@ -896,17 +886,14 @@ def google_ads_youtube_videos(body: YoutubeVideosRequest) -> YoutubeVideosRespon
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "google_ads.youtube_videos",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "google_ads.youtube_videos",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+    )
     return YoutubeVideosResponse(
         customer_id=body.customer_id,
         row_count=len(rows),
@@ -1062,17 +1049,14 @@ def linkedin_accounts() -> LinkedInAccountsResponse:
         rows = linkedin_service.list_ad_accounts()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "linkedin.accounts",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "linkedin.accounts",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+    )
     return LinkedInAccountsResponse(
         count=len(rows),
         accounts=[LinkedInAccountRef(**r) for r in rows],
@@ -1115,17 +1099,14 @@ def linkedin_performance(
         payload = linkedin_service.account_performance(account_id, date_range=preset)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "linkedin.performance",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("campaigns") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "linkedin.performance",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("campaigns") or []),
+        status="ok",
+        error=None,
+    )
     return LinkedInPerformanceResponse(
         account_id=payload["account_id"],
         entity_level=payload.get("entity_level", "account"),
@@ -1160,17 +1141,14 @@ def linkedin_campaign_groups(account_id: str) -> LinkedInCampaignGroupsResponse:
         rows = linkedin_service.list_campaign_groups(account_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "linkedin.campaign_groups",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "linkedin.campaign_groups",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+    )
     return LinkedInCampaignGroupsResponse(
         account_id=str(account_id).strip().split(":")[-1],
         count=len(rows),
@@ -1215,17 +1193,14 @@ def linkedin_campaign_groups_performance(
         payload = linkedin_service.campaign_groups_performance(account_id, date_range=preset)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "linkedin.campaign_groups.performance",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("campaign_groups") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "linkedin.campaign_groups.performance",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("campaign_groups") or []),
+        status="ok",
+        error=None,
+    )
     return LinkedInCampaignGroupsPerformanceResponse(
         account_id=payload["account_id"],
         entity_level=payload.get("entity_level", "account"),
@@ -1276,17 +1251,14 @@ def linkedin_creatives_performance(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "linkedin.creatives.performance",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("creatives") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "linkedin.creatives.performance",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("creatives") or []),
+        status="ok",
+        error=None,
+    )
     return LinkedInCreativesPerformanceResponse(
         account_id=payload["account_id"],
         entity_level=payload.get("entity_level", "account"),
@@ -1331,17 +1303,14 @@ def linkedin_videos(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "linkedin.videos",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("videos") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "linkedin.videos",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("videos") or []),
+        status="ok",
+        error=None,
+    )
     return LinkedInVideosResponse(
         account_id=payload["account_id"],
         row_count=payload["row_count"],
@@ -1428,17 +1397,14 @@ def meta_accounts() -> MetaAccountsResponse:
         rows = meta_service.list_ad_accounts()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "meta.accounts",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "meta.accounts",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+    )
     return MetaAccountsResponse(
         count=len(rows),
         accounts=[MetaAccountRef(**r) for r in rows],
@@ -1481,17 +1447,14 @@ def meta_performance(
         payload = meta_service.account_performance(account_id, date_range=preset)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "meta.performance",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("campaigns") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "meta.performance",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("campaigns") or []),
+        status="ok",
+        error=None,
+    )
     return MetaPerformanceResponse(
         account_id=payload["account_id"],
         entity_level=payload.get("entity_level", "account"),
@@ -1541,17 +1504,14 @@ def meta_adsets_performance(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "meta.adsets.performance",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("adsets") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "meta.adsets.performance",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("adsets") or []),
+        status="ok",
+        error=None,
+    )
     return MetaAdSetsPerformanceResponse(
         account_id=payload["account_id"],
         entity_level=payload.get("entity_level", "account"),
@@ -1596,17 +1556,14 @@ def meta_videos(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        db_cache.put_cached(
-            "meta.videos",
-            cache_payload,
-            response_json=payload,
-            row_count=len(payload.get("videos") or []),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "meta.videos",
+        cache_payload,
+        response_json=payload,
+        row_count=len(payload.get("videos") or []),
+        status="ok",
+        error=None,
+    )
     return MetaVideosResponse(
         account_id=payload["account_id"],
         row_count=payload["row_count"],
@@ -2913,8 +2870,11 @@ def admin_deactivate_user(
         # an old link.
         try:
             user_invites.revoke_for_user(user_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Not fatal — resolve_invite already refuses an inactive account —
+            # but a link that outlives the account it belongs to is worth
+            # knowing about.
+            log.warning("could not revoke invites for deactivated user %s: %s", user_id, exc)
         audit_log.record(
             action="user.deactivated",
             actor_user_id=admin.id,
@@ -2946,8 +2906,14 @@ def admin_reset_password(
         # just set. Setting a password explicitly supersedes any pending invite.
         try:
             user_invites.revoke_for_user(user_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            # This one has teeth: the password is already changed, so a surviving
+            # invite link still lets its holder overwrite it.
+            log.warning(
+                "password reset for user %s but its invites could not be revoked "
+                "— an outstanding link may still be usable: %s",
+                user_id, exc,
+            )
         audit_log.record(
             action="user.password_reset",
             actor_user_id=admin.id,
@@ -3714,17 +3680,14 @@ def ga4_query(body: Ga4QueryRequest) -> Ga4QueryResponse:
                 },
             ) from e
         raise HTTPException(status_code=400, detail=msg) from e
-    try:
-        db_cache.put_cached(
-            "ga4.query",
-            cache_payload,
-            response_json=rows,
-            row_count=len(rows),
-            status="ok",
-            error=None,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        "ga4.query",
+        cache_payload,
+        response_json=rows,
+        row_count=len(rows),
+        status="ok",
+        error=None,
+    )
     return Ga4QueryResponse(row_count=len(rows), rows=rows)
 
 

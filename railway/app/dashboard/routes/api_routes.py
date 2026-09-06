@@ -189,15 +189,12 @@ def _cached_bq_read(source: str, payload: dict, *, ttl_seconds: int, fetch) -> d
     if hit is not None:
         return hit.response_json
     result = fetch()
-    try:
-        db_cache.put_cached(
-            source, payload,
-            response_json=result,
-            row_count=len(result) if isinstance(result, list) else 0,
-            ttl_seconds=ttl_seconds,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        source, payload,
+        response_json=result,
+        row_count=len(result) if isinstance(result, list) else 0,
+        ttl_seconds=ttl_seconds,
+    )
     return result
 
 
@@ -487,8 +484,9 @@ def _nixon_settings_context() -> dict:
             "meta_account_id": cfg.meta_account_id or "",
             "ga4_client_key": cfg.ga4_client_key or "",
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        # Response goes out with empty account ids.
+        logger.warning("could not load account ids: %s", exc)
     return account_ids
 
 

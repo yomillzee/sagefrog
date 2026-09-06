@@ -5,8 +5,11 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import os
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 GLOBAL_GCP_CREDENTIALS_ENV = "GCP_SERVICE_ACCOUNT_JSON"
 
@@ -134,6 +137,8 @@ def load_legacy_service_account_info(
             if isinstance(inner, str) and inner.strip().startswith("{"):
                 candidates.append(inner.strip())
         except json.JSONDecodeError:
+            # The value was not a JSON-encoded string, so there is no inner
+            # payload to add — the raw value already in `candidates` is used.
             pass
 
     if not raw.lstrip().startswith("{"):

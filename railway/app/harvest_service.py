@@ -446,8 +446,9 @@ def build_client_hours_overview(
     try:
         pub = oauth_store.public_status(_PLATFORM)
         base["account_name"] = (pub.metadata or {}).get("account_name")
-    except Exception:
-        pass
+    except Exception as exc:
+        # Status still renders, without the connected account's name.
+        _log.debug("could not read the Harvest account name: %s", exc)
 
     if not base["connected"]:
         base["error"] = "Harvest is not connected."
@@ -1158,6 +1159,6 @@ def status() -> HarvestStatus:
     try:
         pub = oauth_store.public_status(_PLATFORM)
         name = (pub.metadata or {}).get("account_name")
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("could not read the Harvest account name: %s", exc)
     return HarvestStatus(connected=is_connected(), account_id=acct_id, account_name=name)

@@ -1345,8 +1345,9 @@ def fetch_ad_media_index(
                     "video_url": embed or watch,
                 },
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Enrichment only — the ads still list, without video thumbnails.
+        _log.warning("YouTube creative lookup failed for %s: %s", customer_id_clean, exc)
 
     image_query = """
         SELECT
@@ -1380,8 +1381,8 @@ def fetch_ad_media_index(
                     "creative_name": str(_dig(raw, "asset", "name") or ""),
                 },
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("image asset lookup failed for %s: %s", customer_id_clean, exc)
 
     def _ingest_ad_creative_row(raw: dict[str, Any]) -> None:
         ad_id = str(_dig(raw, "ad_group_ad", "ad", "id") or "")
@@ -1451,8 +1452,8 @@ def fetch_ad_media_index(
     try:
         for raw in search(customer_id_clean, ad_creative_query, client=client):
             _ingest_ad_creative_row(raw)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("ad creative lookup failed for %s: %s", customer_id_clean, exc)
 
     demand_gen_query = """
         SELECT
@@ -1471,8 +1472,8 @@ def fetch_ad_media_index(
                 pending_image_assets.setdefault(ad_id, []).extend(
                     _asset_ids_from_link_field(dg.get("marketing_images"))
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("Demand Gen asset lookup failed for %s: %s", customer_id_clean, exc)
 
     all_image_ids = {aid for aids in pending_image_assets.values() for aid in aids}
     image_urls = _fetch_image_urls_for_assets(
@@ -1568,8 +1569,9 @@ def fetch_ad_headlines_index(
             )
             if texts:
                 index[ad_id] = texts
-    except Exception:
-        pass
+    except Exception as exc:
+        # Headlines stay empty, so responsive search ads show without their copy.
+        _log.warning("headline lookup failed for %s: %s", customer_id_clean, exc)
     return index
 
 

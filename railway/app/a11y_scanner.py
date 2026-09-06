@@ -199,13 +199,16 @@ def _scan_one(browser, url: str, *, axe_src: str, tags: list[str]) -> dict[str, 
         # axe sees the DOM a real user would.
         try:
             page.wait_for_timeout(settle)
-        except Exception:
-            pass
+        except Exception as exc:
+            # The page may have navigated or closed under us; the scan below
+            # still runs against whatever DOM we have.
+            _log.debug("settle wait did not complete: %s", exc)
         try:
             final_url = page.url
             title = page.title() or ""
-        except Exception:
-            pass
+        except Exception as exc:
+            # Report keeps the requested URL and an empty title.
+            _log.debug("could not read final URL/title: %s", exc)
         try:
             page.evaluate(axe_src)  # define window.axe
             result = page.evaluate(_AXE_RUN_JS, tags) or {}
@@ -214,8 +217,9 @@ def _scan_one(browser, url: str, *, axe_src: str, tags: list[str]) -> dict[str, 
     finally:
         try:
             context.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Teardown only — the results are already collected.
+            _log.debug("browser context did not close cleanly: %s", exc)
 
     violations = result.get("violations") or []
     incomplete = result.get("incomplete") or []
@@ -348,8 +352,8 @@ def scan_pages(urls: list[str], *, tags: list[str] | None = None) -> dict[str, A
         finally:
             try:
                 browser.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("browser did not close cleanly: %s", exc)
 
     return {
         "available": True,

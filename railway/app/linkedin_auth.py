@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "client_id": ("LINKEDIN_CLIENT_ID",),
@@ -74,8 +77,10 @@ def _resolve_refresh_token(required: bool = True) -> str:
         db_token = oauth_store.get_refresh_token("linkedin")
         if db_token:
             return db_token
-    except Exception:
-        pass
+    except Exception as exc:
+        # Falls through to the environment variable below, which is the normal
+        # path when tokens are not stored in the database.
+        log.debug("no stored linkedin refresh token: %s", exc)
     if not required:
         return ""
     raise RuntimeError(

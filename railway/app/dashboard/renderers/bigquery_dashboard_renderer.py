@@ -11,6 +11,7 @@ on a client's name or slug. Keep it that way.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, timedelta
 from urllib.parse import urlencode
 
@@ -29,6 +30,8 @@ from dashboard.renderers import google_business_renderer, pagespeed_renderer
 # < > & so a stored config value (keyword lists, watchlist, event names) can't
 # close the script tag and run as markup.
 from dashboard.utils.formatting import json_for_html_script as _json_script
+
+log = logging.getLogger(__name__)
 
 
 # ── HubSpot MQL tracker formatting helpers ──────────────────────────────────
@@ -767,8 +770,9 @@ def render_bigquery_dashboard_page(
         if demo_client.is_demo(client_slug) or demo_client.is_demo(api_client_key):
             has_connectors = True
             has_paid_ads = True
-    except Exception:
-        pass
+    except Exception as exc:
+        # Only affects the demo client's Overview.
+        log.debug("demo client check failed for %s: %s", client_slug, exc)
     # Search Console branded roots + target keywords (client-configurable), used
     # by the "Branded & Target Keywords" section. Stored one per line.
     gsc_branded_roots = ""
@@ -839,8 +843,12 @@ def render_bigquery_dashboard_page(
             _cdc.get_pagespeed_targets(api_client_key)
             or _cdc.get_pagespeed_targets(client_slug)
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        # This block loads nearly every per-client dashboard setting — keyword
+        # roots, key events, saved filters, card layouts, budget. Failing here
+        # silently renders a dashboard that looks configured but is showing
+        # defaults for all of it.
+        log.warning("could not load the dashboard config for %s: %s", client_slug, exc)
     # Effective per-KPI PageSpeed target bands (client overrides merged over
     # defaults), injected for the Site Performance tab's traffic-light coloring.
     pagespeed_targets_json = json.dumps(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,8 @@ import client_team
 import web_users
 from security import is_production, session_signing_secret
 from web_users import WebUser
+
+log = logging.getLogger(__name__)
 
 SESSION_USER_ID = "user_id"
 # When an admin is "viewing as" another user, this holds that target user's id.
@@ -178,8 +181,10 @@ def touch_last_seen(request: Request) -> None:
         # cause every subsequent request to retry the write.
         request.session[SESSION_LAST_SEEN_STAMP] = now
         web_users.record_activity(user_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Runs on every request (throttled), and "last seen" is not worth
+        # failing a page over — debug so a database outage does not flood the log.
+        log.debug("could not record activity for user %s: %s", user_id, exc)
 
 
 def impersonation_banner_html(request: Request) -> str:

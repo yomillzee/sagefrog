@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any
 
@@ -10,6 +11,8 @@ from dates_util import resolve_date_range
 from ga4_attribution_service import resolve_key_event_names
 from ga4_clients import Ga4ClientTarget, resolve_target
 from penn_business_lines import classify_business_line, client_filter_profile
+
+log = logging.getLogger(__name__)
 
 
 def _load_custom_business_line_rules(client_slug: str) -> list[tuple[str, str, tuple[str, ...]]] | None:
@@ -422,6 +425,7 @@ def fetch_pages_for_all_presets(
         for p, fut in futures.items():
             try:
                 results[p] = fut.result()
-            except Exception:
-                pass
+            except Exception as exc:
+                # That page's row is missing from the response; the others stand.
+                log.warning("page query failed for %s: %s", p, exc)
     return results

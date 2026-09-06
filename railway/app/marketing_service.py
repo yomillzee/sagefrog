@@ -444,8 +444,9 @@ def fetch_marketing_health(*, limit: int = 100) -> dict[str, Any]:
     try:
         ga4_rows = _run_query(ga4_sql, params={}, max_rows=1)
         rows = list(rows) + [r for r in ga4_rows if r.get("row_count")]
-    except Exception:
-        pass
+    except Exception as exc:
+        # The GA4 row is simply missing from the health table.
+        _log.warning("GA4 health row unavailable: %s", exc)
 
     # Append a Search Console freshness row too -- same reasoning as GA4 above,
     # and lets the Overview date-comparison feature warn when the requested
@@ -455,8 +456,8 @@ def fetch_marketing_health(*, limit: int = 100) -> dict[str, Any]:
         gsc_row = bq_gsc_service.gsc_health_row(client_slug=_client_key())
         if gsc_row:
             rows = list(rows) + [gsc_row]
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("GSC health row unavailable: %s", exc)
 
     return {"client": _client_key(), "row_count": len(rows), "rows": rows}
 

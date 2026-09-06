@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote as _url_quote
@@ -11,6 +12,8 @@ import connectors  # noqa: F401 — triggers handler registration
 from connectors.base import CONNECTOR_ORDER, ConnectorHandler, all_handlers
 from dashboard.renderers.base_layout import render_client_shell_page
 from dashboard.utils.formatting import esc as _esc
+
+log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SVG icons per platform
@@ -1183,8 +1186,10 @@ def _render_management_view(
             _hs_objects = _saved["sync_objects"]
             _stage_opts = _hs.lifecycle_options()
             _obj_opts = _hs.object_options()
-        except Exception:
-            pass
+        except Exception as exc:
+            # The form then shows defaults rather than what is actually saved,
+            # so a save from that state would silently change the config.
+            log.warning("could not read saved HubSpot sync options: %s", exc)
         _opts_html = "".join(
             f'<option value="{_esc(o["value"])}"{" selected" if o["value"] == _hs_stage else ""}>{_esc(o["label"])}</option>'
             for o in _stage_opts

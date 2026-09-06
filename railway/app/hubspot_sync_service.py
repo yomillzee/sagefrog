@@ -480,8 +480,8 @@ def _ensure_table(
             client.update_table(obj, ["schema"])
             LOGGER.info("Updated %s schema with new columns", ref)
         return
-    except Exception:
-        pass  # table doesn't exist yet — create below
+    except Exception as exc:
+        LOGGER.debug("schema check for %s did not complete: %s", ref, exc)
     tbl = bigquery.Table(ref, schema=schema)
     tbl.time_partitioning = bigquery.TimePartitioning(
         type_=bigquery.TimePartitioningType.DAY,
