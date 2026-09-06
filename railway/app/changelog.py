@@ -63,6 +63,23 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-06",
+        title="“Choose emails” is usable on a phone again",
+        area="Email Performance",
+        kind="fixed",
+        summary=(
+            "On a phone the email picker opened half off the left edge of the "
+            "screen, so most of the list and the search box were unreachable. "
+            "It now opens as a full-width panel at the bottom of the screen."
+        ),
+        details=(
+            "The rest of the page is dimmed while it is open; tapping outside "
+            "it, or the ×, closes it.",
+            "Opening it no longer throws the keyboard up over the list — tap "
+            "the search box when you actually want to type.",
+        ),
+    ),
+    Entry(
+        date="2026-09-06",
         title="Email Performance says whether a send actually did well",
         area="Email Performance",
         kind="improved",
