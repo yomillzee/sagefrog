@@ -13,9 +13,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from dashboard.assets import dashboard_css  # noqa: E402
-from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
-    render_bigquery_dashboard_page,
-)
+from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
 # The Campaign explorer table ends in a grand-total row: spend, impressions,
 # clicks, CTR, conversions and verified conversions for everything currently in

@@ -274,9 +274,7 @@ class OverviewLoadOrderTests(unittest.TestCase):
     """The Overview's cards must not be chained behind the health fetch."""
 
     def _page(self) -> str:
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
         return render_bigquery_dashboard_page(
             client_slug="demo", api_client_key="demo", label="Demo",

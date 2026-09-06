@@ -67,14 +67,17 @@ ENTRIES: tuple[Entry, ...] = (
         area="Client Dashboards",
         kind="improved",
         summary=(
-            "The dashboard's styling now downloads once and is reused, instead "
-            "of being re-sent inside every page. Pages are about a quarter "
-            "smaller, and moving between views is quicker after the first load."
+            "The dashboard's styling and scripts now download once and are "
+            "reused, instead of being re-sent inside every page. A dashboard "
+            "page is about six times smaller, so switching views and switching "
+            "clients is noticeably quicker after the first load."
         ),
         details=(
-            "Nothing about how any page looks has changed.",
-            "If a dashboard ever appears completely unstyled, it means the "
-            "stylesheet did not load — a refresh will fix it.",
+            "Nothing about how any page looks or behaves has changed.",
+            "The saving is largest on slow connections and on phones, and it "
+            "applies to every client dashboard.",
+            "If a dashboard ever loads unstyled or a panel stops responding, "
+            "it means a file did not download — a refresh will fix it.",
         ),
     ),
     Entry(

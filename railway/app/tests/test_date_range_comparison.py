@@ -61,9 +61,7 @@ if "google.cloud.bigquery" not in sys.modules:
 import bq_gsc_service  # noqa: E402
 import client_dashboard_config as cdc  # noqa: E402
 from dashboard.assets import dashboard_css  # noqa: E402
-from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
-    render_bigquery_dashboard_page,
-)
+from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
 
 def _render(**kwargs) -> str:

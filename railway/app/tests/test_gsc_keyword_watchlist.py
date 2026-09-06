@@ -23,9 +23,9 @@ if str(APP_DIR) not in sys.path:
 import bq_gsc_service  # noqa: E402
 import demo_data  # noqa: E402
 from dashboard.assets import dashboard_css  # noqa: E402
+from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
     parse_gsc_watchlist,
-    render_bigquery_dashboard_page,
 )
 
 

@@ -49,6 +49,7 @@ from functools import lru_cache
 from pathlib import Path
 
 CSS_DIR = Path(__file__).resolve().parent.parent / "static" / "css"
+JS_DIR = Path(__file__).resolve().parent.parent / "static" / "js"
 
 # Interleave plan, in cascade order. Each entry is one of:
 #   ("file", stem)  — read static/css/<stem>.css
@@ -117,3 +118,61 @@ def dashboard_css() -> tuple[str, str]:
 def dashboard_css_url() -> str:
     """Cache-busting URL for the composed stylesheet."""
     return f"/assets/dashboard-{dashboard_css()[0]}.css"
+
+
+# ── JavaScript ──────────────────────────────────────────────────────────────
+# Same story as the CSS, and the bigger half of it: ~5,400 lines of JS lived in
+# the renderer's f-string, 66% of every page. It is now two files plus the two
+# panes other renderers own, in the order the single <script> had them:
+#
+#     1. dashboard-shell.js    panel edit mode, formatters, charts, tabs
+#     2. pagespeed_renderer.pane_js()          (Site Performance)
+#     3. google_business_renderer.pane_js()    (Google Business)
+#     4. dashboard-panels.js   explorer, demographics, GA4 pages, AI traffic
+#
+# The values that genuinely vary per request — API URLs, feature flags, the
+# selected date range — stay in a small inline <script> the page emits *before*
+# this file, so the composed body is identical for every client and cacheable.
+# Order matters here in a way it did not for CSS: the panes read constants from
+# that preamble at load time, and everything shares one global scope.
+
+_JS_CASCADE: tuple[tuple[str, object], ...] = (
+    ("file", "dashboard-shell"),
+    ("frag", 0),  # pagespeed_renderer.pane_js()
+    ("raw", "\n    "),
+    ("frag", 1),  # google_business_renderer.pane_js()
+    ("file", "dashboard-panels"),
+)
+
+
+def _js_fragments() -> list[str]:
+    """The pane JS owned by other renderer modules, in cascade order."""
+    from dashboard.renderers import google_business_renderer, pagespeed_renderer
+
+    return [pagespeed_renderer.pane_js(), google_business_renderer.pane_js()]
+
+
+def _compose_js() -> str:
+    frags = _js_fragments()
+    parts: list[str] = []
+    for kind, value in _JS_CASCADE:
+        if kind == "file":
+            parts.append((JS_DIR / f"{value}.js").read_text(encoding="utf-8"))
+        elif kind == "frag":
+            parts.append(frags[value])
+        else:
+            parts.append(str(value))
+    return "".join(parts)
+
+
+@lru_cache(maxsize=1)
+def dashboard_js() -> tuple[str, str]:
+    """``(digest, body)`` for the composed dashboard script."""
+    body = _compose_js()
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+    return digest, body
+
+
+def dashboard_js_url() -> str:
+    """Cache-busting URL for the composed script."""
+    return f"/assets/dashboard-{dashboard_js()[0]}.js"

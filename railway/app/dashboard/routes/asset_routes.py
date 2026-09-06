@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response
 
-from dashboard.assets import dashboard_css
+from dashboard.assets import dashboard_css, dashboard_js
 
 router = APIRouter(include_in_schema=False)
 
@@ -33,10 +33,19 @@ def dashboard_stylesheet(digest: str) -> Response:
     deploy — answering it with the current CSS is both correct for that page and
     kinder than a 404 during the window where both versions are in flight.
     """
-    current, body = dashboard_css()
+    return _asset_response(*dashboard_css(), media_type="text/css; charset=utf-8")
+
+
+@router.get("/assets/dashboard-{digest}.js")
+def dashboard_script(digest: str) -> Response:
+    """Serve the composed dashboard JS. Same stale-digest rule as the CSS."""
+    return _asset_response(*dashboard_js(), media_type="text/javascript; charset=utf-8")
+
+
+def _asset_response(current: str, body: str, *, media_type: str) -> Response:
     return Response(
         content=body,
-        media_type="text/css; charset=utf-8",
+        media_type=media_type,
         headers={
             "Cache-Control": _CACHE_CONTROL,
             # Lets a client with a stale URL notice it drifted, without

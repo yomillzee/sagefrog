@@ -23,9 +23,7 @@ class RendererDefaultTests(unittest.TestCase):
     """The dashboard must not request benchmarks unless told to."""
 
     def _render(self, **kw):
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
 
         return render_bigquery_dashboard_page(
             client_slug="demo", api_client_key="demo", label="Demo",

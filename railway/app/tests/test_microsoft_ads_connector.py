@@ -85,11 +85,10 @@ class MicrosoftAdsRegistrationTests(unittest.TestCase):
         self.assertIn("mirror_microsoft_ad_daily_batch", src)
 
     def test_explorer_renders_ad_hierarchy(self) -> None:
-        import inspect
+        from dashboard.assets import dashboard_js
 
-        from dashboard.renderers import bigquery_dashboard_renderer as r
-
-        src = inspect.getsource(r)
+        # The explorer's JS ships as a cached asset now, not renderer source.
+        src = dashboard_js()[1]
         # Microsoft rows carry ad-group / ad copy so the tree drills like Google.
         self.assertIn("title_part_1", src)
         self.assertIn("ad_group_name:r.ad_group_name", src)
@@ -101,11 +100,9 @@ class MicrosoftAdsRegistrationTests(unittest.TestCase):
         self.assertIn("/api/clients/{client_key}/microsoft-ads/explorer", paths)
 
     def test_explorer_wired_into_dashboard_renderer(self) -> None:
-        import inspect
+        from dashboard.assets import dashboard_js
 
-        from dashboard.renderers import bigquery_dashboard_renderer as r
-
-        src = inspect.getsource(r)
+        src = dashboard_js()[1]
         self.assertIn("MICROSOFT_EXPLORER_API", src)
         self.assertIn("normalizeExplorerRows(g,l,m,ms)", src)
         self.assertIn("platform:'microsoft'", src)

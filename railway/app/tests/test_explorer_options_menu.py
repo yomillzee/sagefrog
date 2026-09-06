@@ -56,9 +56,7 @@ class ExplorerOptionsMenuTests(unittest.TestCase):
         cdc.get_config = self._orig_cfg
 
     def _html(self, *, admin: bool) -> str:
-        from dashboard.renderers.bigquery_dashboard_renderer import (
-            render_bigquery_dashboard_page,
-        )
+        from _dashboard_page import render_bigquery_dashboard_page  # noqa: E402
         return render_bigquery_dashboard_page(
             client_slug="test", api_client_key="test", label="Test Co",
             use_session=True, session_is_admin=admin,
