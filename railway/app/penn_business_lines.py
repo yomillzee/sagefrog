@@ -7,7 +7,10 @@ client-name branching lives here — behavior is driven by config."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # (id, label, keyword substrings — first match wins)
 BUSINESS_LINE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
@@ -302,8 +305,8 @@ def client_has_segment_filters(
         import business_line_rules as _bl_rules
         if _bl_rules.enabled() and _bl_rules.has_rules(client_slug):
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("business-line rule check failed for %s: %s", client_slug, exc)
     return False
 
 

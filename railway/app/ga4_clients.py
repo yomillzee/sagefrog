@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from ga4_credentials import GLOBAL_GCP_CREDENTIALS_ENV, load_service_account_info_from_env
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -116,8 +119,10 @@ def load_client_registry() -> dict[str, Ga4ClientTarget]:
                 account_id=_account_id_from_dataset(row.bq_dataset_id),
                 credentials_env=row.credentials_env or None,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Only the env-configured clients remain, so a client that exists solely
+        # in the registry disappears from the GA4 list.
+        log.warning("could not load GA4 clients from the registry: %s", exc)
     return out
 
 

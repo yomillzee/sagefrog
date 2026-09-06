@@ -102,13 +102,10 @@ def db_cache_get_or_fetch(source: str, payload: dict, fetch) -> dict:
     if hit is not None:
         return hit.response_json
     result = fetch()
-    try:
-        db_cache.put_cached(
-            source, payload, response_json=result, row_count=0,
-            ttl_seconds=_SUMMARY_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        source, payload, response_json=result, row_count=0,
+        ttl_seconds=_SUMMARY_TTL_SECONDS,
+    )
     return result
 
 

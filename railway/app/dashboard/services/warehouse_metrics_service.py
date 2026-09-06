@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -13,6 +14,8 @@ import meta_service
 import warehouse
 from dashboard.utils.formatting import platform_error
 from dashboard_config import DashboardConfig
+
+log = logging.getLogger(__name__)
 
 
 def totals_from_daily_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -158,8 +161,10 @@ def merge_linkedin_creative_media(
                 val = str(media.get(key) or "").strip()
                 if val and not str(creative.get(key) or "").strip():
                     creative[key] = val
-    except Exception:
-        pass
+    except Exception as exc:
+        # Enrichment only: the creatives still render, just without thumbnails
+        # or media URLs, which looks like LinkedIn returned nothing.
+        log.warning("could not enrich LinkedIn creatives for account %s: %s", account_id, exc)
     enrich_stats: dict[str, int] = {}
     try:
         enrich_stats = linkedin_service.enrich_creative_rows_with_media(creatives, account_id)
@@ -207,16 +212,20 @@ def sync_campaign_daily(
         import client_dashboard_config as _cdc
         db_cfg = _cdc.get_config(cfg.client_key)
         bq_project_id = (db_cfg.gcp_project_id if db_cfg else None) or None
-    except Exception:
-        pass
+    except Exception as exc:
+        # Expected when the client has no per-client project configured; the
+        # ga4_clients lookup below is the fallback.
+        log.debug("no per-client GCP project for %s: %s", cfg.client_key, exc)
     if not bq_project_id:
         try:
             import ga4_clients
             target = ga4_clients.resolve_target(client_key=cfg.ga4_client_key or cfg.client_key)
             bq_project_id = target.bq_project_id or None
             credentials_env = target.credentials_env or None
-        except Exception:
-            pass
+        except Exception as exc:
+            # Both routes to a project id have now failed, so the warehouse
+            # reads below will come back empty.
+            log.warning("could not resolve a BigQuery project for %s: %s", cfg.client_key, exc)
 
     for source, account_id, fetch_fn in (
         ("google", cfg.google_customer_id, google_ads_service.fetch_campaign_daily_metrics),
@@ -280,8 +289,10 @@ def load_campaign_daily_from_warehouse(
             rows = warehouse.query_campaign_daily(source, account_id, start, end)
             if rows:
                 result[source] = {r["campaign_id"]: r for r in rows}
-        except Exception:
-            pass
+        except Exception as exc:
+            # One source failing leaves the others intact — the dashboard just
+            # shows nothing for this platform, with no other clue why.
+            log.warning("warehouse read failed for %s account %s: %s", source, account_id, exc)
     return result
 
 
@@ -307,8 +318,8 @@ def load_campaign_daily_from_bq(
         target = ga4_clients.resolve_target(client_key=client_key)
         bq_project_id = target.bq_project_id
         credentials_env = target.credentials_env or None
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("could not resolve a BigQuery target for %s: %s", client_key, exc)
 
     def _group(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         by_cid: dict[str, dict[str, Any]] = {}
@@ -336,16 +347,16 @@ def load_campaign_daily_from_bq(
             rows = _marts.fetch_campaign_daily(**common)
             if grouped := _group(rows):
                 result["google"] = grouped
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("mart read failed for Google Ads: %s", exc)
 
     if linkedin_account_id:
         try:
             rows = _marts.fetch_linkedin_campaign_daily(**common)
             if grouped := _group(rows):
                 result["linkedin"] = grouped
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("mart read failed for LinkedIn: %s", exc)
 
     if meta_account_id:
         try:
@@ -356,8 +367,8 @@ def load_campaign_daily_from_bq(
                 rows = _meta.fetch_meta_campaign_daily(start=start, end=end)
             if grouped := _group(rows):
                 result["meta"] = grouped
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("mart read failed for Meta: %s", exc)
 
     return result
 

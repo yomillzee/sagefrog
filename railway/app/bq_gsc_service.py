@@ -32,6 +32,7 @@ Required env vars (fall back to defaults if unset):
 from __future__ import annotations
 
 import contextvars
+import logging
 import os
 from contextlib import contextmanager
 from datetime import date, timedelta
@@ -39,6 +40,8 @@ from decimal import Decimal
 from typing import Any
 
 import bigquery_service
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT       = "penn-community-b-1699391543298"
 _DEFAULT_NATIVE_DS     = "searchconsole_penn"
@@ -663,8 +666,10 @@ def create_gsc_mart_views(client_slug: str | None = None) -> dict[str, Any]:
         try:
             from google.cloud import bigquery as _bq
             client.create_dataset(_bq.Dataset(f"{project}.{mart_ds}"), exists_ok=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            # The mart writes below will fail more confusingly if this was the
+            # real problem.
+            log.warning("could not ensure mart dataset %s.%s: %s", project, mart_ds, exc)
         q = f"`{project}.{raw_ds}.{_QUERY_HIST_TABLE}`"
         p = f"`{project}.{raw_ds}.{_PAGE_HIST_TABLE}`"
         views = {

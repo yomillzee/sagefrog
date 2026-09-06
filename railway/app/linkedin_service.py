@@ -136,6 +136,8 @@ def _linkedin_get(
         try:
             detail = response.json()
         except Exception:
+            # The error body was not JSON; `detail` keeps the raw text, which is
+            # what we want to surface. Nothing is lost, so nothing is logged.
             pass
         version_note = f" (Linkedin-Version={api_version})" if api_version else ""
         raise RuntimeError(
@@ -224,6 +226,8 @@ def refresh_access_token(env: LinkedInEnv | None = None) -> dict[str, Any]:
         try:
             detail = response.json()
         except Exception:
+            # The error body was not JSON; `detail` keeps the raw text, which is
+            # what we want to surface. Nothing is lost, so nothing is logged.
             pass
         raise RuntimeError(f"LinkedIn OAuth refresh failed ({response.status_code}): {detail}")
     data = response.json()
@@ -1557,8 +1561,10 @@ def fetch_creatives_metadata_by_ids(
                     env=env,
                     group_name_cache=group_name_cache,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # The row keeps its blank campaign/group names rather than
+                # dropping out entirely.
+                _log.warning("could not resolve campaign %s metadata: %s", cid, exc)
 
         item: dict[str, Any] = {
             "id": crid,
@@ -2188,8 +2194,10 @@ def _fetch_sponsored_posts_index(
             post_id = str(post.get("id") or "").strip()
             if post_id:
                 index[post_id] = post
-    except Exception:
-        pass
+    except Exception as exc:
+        # Without the post index the creatives still list, but lose their post
+        # text and media — which reads as LinkedIn having returned nothing.
+        _log.warning("could not index sponsored posts for account %s: %s", account_id_clean, exc)
     return index
 
 
@@ -2303,8 +2311,9 @@ def _fetch_linkedin_image_asset(
         url = str(data.get("downloadUrl") or "")
         out["image_url"] = url
         out["thumbnail_url"] = url
-    except Exception:
-        pass
+    except Exception as exc:
+        # Leaves the URLs empty, so the creative renders without its image.
+        _log.warning("could not resolve LinkedIn image %s: %s", image_urn, exc)
     cache[image_urn] = out
     return out
 
@@ -2331,8 +2340,10 @@ def _list_creatives_for_account(
         )
         if rows:
             return rows
-    except Exception:
-        pass
+    except Exception as exc:
+        # Falls through to the caller's next strategy; logged because a silent
+        # miss here looks like an account with no creatives at all.
+        _log.warning("creative lookup failed for account %s: %s", account_id_clean, exc)
 
     # Fallback: discover creatives with recent delivery via analytics.
     start, end, _ = resolve_date_range("LAST_180_DAYS")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import client_config
@@ -15,6 +16,8 @@ from dashboard_config import DashboardConfig
 
 from dashboard.services.warehouse_metrics_service import sync_meta
 from datetime import UTC
+
+log = logging.getLogger(__name__)
 
 
 def patch_snapshot_from_config(cfg: DashboardConfig) -> None:
@@ -107,8 +110,9 @@ def refresh_bq_client(
             _ga4_target = _ga4c.resolve_target(client_key=ga4_client_key)
             _mart_bq_project = _ga4_target.bq_project_id or None
             _mart_credentials_env = _ga4_target.credentials_env or None
-        except Exception:
-            pass
+        except Exception as exc:
+            # No project id means the mart reads below quietly return nothing.
+            log.warning("could not resolve a mart BigQuery project for %s: %s", ga4_client_key, exc)
 
     # Reuse cached SEMrush data until it ages past the connector's sync
     # interval (monthly by default). Every SEMrush call bills against one
@@ -127,8 +131,10 @@ def refresh_bq_client(
             _smr_age_hours = (
                 datetime.now(UTC) - datetime.fromisoformat(_fetched)
             ).total_seconds() / 3600
-    except Exception:
-        pass
+    except Exception as exc:
+        # Age stays at its 999h sentinel, which reads as "stale" — the safe
+        # direction, but not because we actually know it is.
+        log.debug("could not parse the cached Semrush timestamp: %s", exc)
     _smr_fresh = _smr_age_hours < max(24, 24 * _smr_interval_days())
     # Only a real ingestion cycle (cron/onboarding/explicit Full Refresh) may
     # spend units — same gate as every other source above. A cache-miss GET
@@ -157,8 +163,9 @@ def refresh_bq_client(
             try:
                 _s, _e, _ = _resolve(_p)
                 by_preset[_p] = bq_gsc_service.build_gsc_snapshot(start=_s, end=_e, client_slug=slug)
-            except Exception:
-                pass
+            except Exception as exc:
+                # That preset is simply absent from the response.
+                log.warning("GSC snapshot failed for preset %s: %s", _p, exc)
         return data, by_preset
 
     _pool = ThreadPoolExecutor(max_workers=2)

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
 from dashboard_config import DashboardConfig
+
+log = logging.getLogger(__name__)
 
 # Built-in clients besides Penn (account IDs optional — set in Settings or DASHBOARD_CLIENTS).
 # Trimmed to just the two portals still in use (nixon-bq-test, and "nixon" which
@@ -70,8 +73,10 @@ def _registry_rows() -> list:
 
         if dashboard_registry.enabled():
             return dashboard_registry.list_clients(with_logos=False)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Falls back to the env-configured list below, which may be a shorter
+        # set of clients than the registry would have returned.
+        log.warning("client registry unavailable, falling back to env config: %s", exc)
     return []
 
 
@@ -90,8 +95,9 @@ def _slugs_from_rows(rows: list) -> list[str]:
 
         if dashboard_registry.enabled():
             suppressed = dashboard_registry.suppressed_slugs()
-    except Exception:
-        pass
+    except Exception as exc:
+        # `suppressed` stays empty, so a client that should be hidden may show.
+        log.warning("could not read suppressed client slugs: %s", exc)
     registry = _load_registry_from_env()
     slugs.update(slug for slug in registry.keys() if slug not in suppressed)
     slugs.update(slug for slug in _BUILTIN_CLIENTS.keys() if slug not in suppressed)
@@ -131,16 +137,17 @@ def _labels_for_slugs(slugs: list[str], *, rows: list | None = None) -> dict[str
         for row in (_registry_rows() if rows is None else rows):
             if row.label:
                 labels[row.client_slug] = row.label
-    except Exception:
-        pass
+    except Exception as exc:
+        # Clients then display as their raw slug instead of their label.
+        log.warning("could not read client labels from the registry: %s", exc)
     try:
         import client_dashboard_config as cdc
 
         if cdc.enabled():
             rows = cdc.list_config_labels()
             labels.update({slug: label for slug, label in rows.items() if label})
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("could not read per-client config labels: %s", exc)
     return labels
 
 

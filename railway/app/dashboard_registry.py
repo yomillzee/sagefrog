@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -15,6 +16,8 @@ import db
 import db_migrate
 
 import web_users
+
+log = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}[a-z0-9]$|^[a-z]$")
 _RESERVED_SLUGS = frozenset(
@@ -455,8 +458,9 @@ def rename_client(
         import client_dashboard_config as cdc
 
         cdc.set_label(slug, name, updated_by=updated_by)
-    except Exception:
-        pass
+    except Exception as exc:
+        # The registry name and the dashboard header now disagree.
+        log.warning("could not mirror the label for %s to its config row: %s", slug, exc)
 
     row = get_client(slug)
     if not row:

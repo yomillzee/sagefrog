@@ -208,6 +208,8 @@ def list_accessible_properties() -> list[dict[str, str]]:
         try:
             body = exc.read().decode("utf-8", errors="replace")[:300]
         except Exception:
+            # Best effort at a readable error body; `body` stays empty and the
+            # caller reports the status code alone. Nothing is lost.
             pass
         raise RuntimeError(
             f"webmasters API {exc.code} (cred_type={cred_type}, "
@@ -475,8 +477,11 @@ def _dates_present(client, table_id: str, start: date, end: date) -> set[date]:
             val = dict(row.items()).get("date")
             if val:
                 out.add(val if isinstance(val, date) else date.fromisoformat(str(val)[:10]))
-    except Exception:
-        pass  # missing table / permission -> treat as nothing present
+    except Exception as exc:
+        # Missing table -> genuinely nothing present, which is the common case.
+        # A permission error looks identical here, and then a gap repair silently
+        # decides there is nothing to backfill, so it is worth a debug line.
+        log.debug("could not read present dates (treating as none): %s", exc)
     return out
 
 
@@ -498,8 +503,8 @@ def _empty_days(client, target, dimension: str, start: date, end: date) -> set[d
             val = dict(row.items()).get("date")
             if val:
                 out.add(val if isinstance(val, date) else date.fromisoformat(str(val)[:10]))
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("could not read present dates (treating as none): %s", exc)
     return out
 
 

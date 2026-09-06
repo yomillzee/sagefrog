@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -13,6 +14,8 @@ import bcrypt
 import psycopg
 import db
 import db_migrate
+
+log = logging.getLogger(__name__)
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -392,8 +395,9 @@ def record_login(user_id: int) -> None:
                 "WHERE id = %s AND is_active = TRUE",
                 (int(user_id),),
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Bookkeeping on a hot path; debug so an outage does not flood the log.
+        log.debug("could not update activity timestamps for user %s: %s", user_id, exc)
 
 
 def record_activity(user_id: int) -> None:
@@ -415,8 +419,9 @@ def record_activity(user_id: int) -> None:
                 "WHERE id = %s AND is_active = TRUE",
                 (int(user_id),),
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Bookkeeping on a hot path; debug so an outage does not flood the log.
+        log.debug("could not update activity timestamps for user %s: %s", user_id, exc)
 
 
 def list_users(*, include_inactive: bool = False) -> list[dict[str, Any]]:

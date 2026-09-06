@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 import dashboard_theme
@@ -20,6 +21,8 @@ from dashboard.utils.urls import (
     settings_page_url as _settings_page_url,
     web_mentions_page_url as _web_mentions_page_url,
 )
+
+log = logging.getLogger(__name__)
 
 def favicon_head_html() -> str:
     return """
@@ -1322,8 +1325,11 @@ def _sidebar_admin_nav_html(
         u = web_users.get_user_by_email(email) if (email and web_users.enabled()) else None
         if u:
             role = u.role
-    except Exception:
-        pass
+    except Exception as exc:
+        # `role` keeps its session-derived value, so the nav below is gated on a
+        # guess rather than the stored role. Not an access-control decision on
+        # its own — the routes re-check — but worth knowing it happened.
+        log.warning("could not load the stored role for %s: %s", email, exc)
     if not ((session_is_admin or role in ("admin", "standard")) and role != "client"):
         return ""
 
@@ -1362,8 +1368,8 @@ def _sidebar_notifications_link_html(*, email: str | None, session_is_admin: boo
         u = web_users.get_user_by_email(email) if web_users.enabled() else None
         if u:
             role = u.role
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("could not load the stored role for %s: %s", email, exc)
     if role not in ("admin", "standard"):
         return ""
 
@@ -1411,8 +1417,9 @@ def _sidebar_footer_tools_html(*, email: str | None) -> str:
         if u:
             avatar = u.avatar
             full_name = u.full_name
-    except Exception:
-        pass
+    except Exception as exc:
+        # Cosmetic: the account chip falls back to initials from the email.
+        log.debug("could not load the profile for %s: %s", email, exc)
 
     name = _display_name_from_email(email, full_name)
     avatar_html = _person_avatar_html(email=email, avatar=avatar, name=name)

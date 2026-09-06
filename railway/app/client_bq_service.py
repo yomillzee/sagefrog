@@ -10,6 +10,7 @@ All functions return dicts in the same shape the dashboard JS expects.
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,8 @@ from typing import Any
 from google.cloud import bigquery
 
 import bigquery_service
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_DATASET = "marketing_marts"
 
@@ -222,8 +225,9 @@ def fetch_health(
             max_rows=1,
         )
         rows = list(rows) + [r for r in ga4_rows if r.get("row_count")]
-    except Exception:
-        pass
+    except Exception as exc:
+        # The GA4 row is simply absent from the health table.
+        log.warning("GA4 health row unavailable: %s", exc)
 
     return {"client": client_key, "row_count": len(rows), "rows": rows}
 

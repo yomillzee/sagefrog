@@ -350,6 +350,7 @@ def _graph_get(
             try:
                 detail = response.json()
             except Exception:
+                # The error body was not JSON; `detail` keeps the raw text.
                 pass
             raise RuntimeError(
                 f"Meta Graph API error {response.status_code} on {_display_path(path)}: {_redact(detail)}"
@@ -2100,8 +2101,9 @@ def _creative_rows_from_ads(
     if video_ids:
         try:
             video_details = _fetch_video_details(video_ids, access_token=access_token, env=env)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Creatives keep their placeholder thumbnails.
+            _log.warning("could not fetch Meta video details: %s", exc)
 
     for item in interim:
         vid = item.pop("video_id", "")

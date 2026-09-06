@@ -330,8 +330,10 @@ def clear_login_limits(*, ip: str | None, email: str) -> None:
                 "DELETE FROM login_rate_buckets WHERE bucket_key = ANY(%s)",
                 ([_bucket_key_ip(ip), _bucket_key_email(email)],),
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # The buckets survive a successful login, so the user stays throttled
+        # (and may be locked out) until they expire on their own.
+        log.warning("could not clear rate-limit buckets after a successful login: %s", exc)
     finally:
         # Always clear the in-memory fallback so a successful login resets it.
         _mem_clear([_bucket_key_ip(ip), _bucket_key_email(email)])

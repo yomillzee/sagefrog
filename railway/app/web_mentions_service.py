@@ -134,6 +134,8 @@ def validate_feed_url(url: str) -> tuple[bool, str]:
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False, f"Private/loopback addresses are not allowed: {host}"
         except ValueError:
+            # Not a literal IP, so there is no address to classify — a hostname,
+            # which the checks above already vetted. Deliberately silent.
             pass
         return True, raw
 
@@ -213,6 +215,8 @@ def _parse_datetime(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     except ValueError:
+        # Not ISO-8601 — fall through to the RFC 2822 parse below. Feeds use
+        # both, so this is the normal path, not a failure.
         pass
     try:
         from email.utils import parsedate_to_datetime
@@ -221,6 +225,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
         if parsed is not None:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     except Exception:
+        # Neither format matched; the caller treats the date as unknown.
         pass
     return None
 

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import db
+
+log = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -223,3 +226,21 @@ def put_cached(
     with db.connection() as conn:
         conn.execute(sql, (source, key, req_json, resp_json, int(row_count or 0), status, error, expires))
 
+
+def put_cached_best_effort(source: str, payload: dict[str, Any], **kwargs: Any) -> None:
+    """:func:`put_cached`, but a failure never reaches the caller.
+
+    This is the write-through after a successful upstream call: the response is
+    already in hand, so a cache write that fails must not turn a good answer
+    into a 500. It must not be *silent* either. Every caller of this used to
+    spell it out as a bare ``except Exception: pass``, which meant a cache that
+    had quietly stopped accepting writes — schema drift, a full disk, a dead
+    connection — looked exactly like a slow upstream: every request paid full
+    price and nothing in the log said why.
+    """
+    try:
+        put_cached(source, payload, **kwargs)
+    except Exception as exc:
+        # Deliberately not exc_info: when the database is unreachable this fires
+        # on every request, and a traceback apiece buries everything else.
+        log.warning("cache write failed for %s (response still served): %s", source, exc)

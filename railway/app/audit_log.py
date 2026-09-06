@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from datetime import UTC, datetime
@@ -12,6 +13,8 @@ import db
 
 import db_migrate
 import web_users
+
+log = logging.getLogger(__name__)
 
 SCHEMA_SQL_STATEMENTS = [
     """
@@ -141,8 +144,11 @@ def record(
                     datetime.now(tz=UTC),
                 ),
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        # An audit trail that silently stops recording is worse than one that is
+        # missing outright — the gap is invisible. Never raise (an audit write
+        # must not fail the action it records), but always say so.
+        log.warning("audit event %r was not recorded: %s", action, exc)
 
 
 def request_context(request) -> dict[str, str | None]:

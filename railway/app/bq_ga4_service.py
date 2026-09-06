@@ -403,8 +403,11 @@ def ensure_ga4_tables() -> None:
                 table_obj = bq.Table(table_id, schema=schema)
                 table_obj.time_partitioning = bq.TimePartitioning(field="date")
                 client.update_table(table_obj, ["schema"])
-        except Exception:
-            pass  # Table doesn't exist yet — create below.
+        except Exception as exc:
+            # Usually "not there yet" — the create below handles it. At debug
+            # because a rejected update_table lands here too, and then the new
+            # columns silently never get added and later inserts fail instead.
+            _log.debug("GA4 %s: schema check did not complete: %s", table_name, exc)
 
         table = bq.Table(table_id, schema=schema)
         table.time_partitioning = bq.TimePartitioning(field="date")

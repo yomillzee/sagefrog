@@ -304,13 +304,10 @@ def _cached_linkedin_followers(slug: str) -> int | None:
     import linkedin_organic_report_service
 
     followers = linkedin_organic_report_service.fetch_latest_followers(slug)
-    try:
-        db_cache.put_cached(
-            source, payload, response_json={"followers": followers},
-            row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        source, payload, response_json={"followers": followers},
+        row_count=0, ttl_seconds=_CLIENT_TTL_SECONDS,
+    )
     return followers
 
 
@@ -574,13 +571,10 @@ def build_agency_benchmarks(
         "thin_sample_max": THIN_SAMPLE_MAX,
         "generated_at": datetime.now(tz=UTC).isoformat(),
     }
-    try:
-        db_cache.put_cached(
-            _CACHE_SOURCE, cache_key, response_json=result,
-            row_count=len(result["clients"]), ttl_seconds=_CACHE_TTL_SECONDS,
-        )
-    except Exception:
-        pass
+    db_cache.put_cached_best_effort(
+        _CACHE_SOURCE, cache_key, response_json=result,
+        row_count=len(result["clients"]), ttl_seconds=_CACHE_TTL_SECONDS,
+    )
     return result
 
 

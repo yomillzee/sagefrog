@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "app_id": ("META_APP_ID", "FACEBOOK_APP_ID"),
@@ -68,8 +71,8 @@ def _resolve_access_token() -> str:
         db_token = oauth_store.get_access_token("meta")
         if db_token:
             return db_token
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("no stored Meta access token: %s", exc)
     raise RuntimeError(
         "Missing Meta access token. Connect Meta in dashboard settings "
         "(Settings → Connect Meta)."

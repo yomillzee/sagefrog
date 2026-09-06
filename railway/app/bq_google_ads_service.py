@@ -244,8 +244,8 @@ def ensure_google_ads_tables() -> None:
                 table_obj = bq.Table(table_id, schema=schema)
                 table_obj.time_partitioning = bq.TimePartitioning(field="metric_date")
                 client.update_table(table_obj, ["schema"])
-        except Exception:
-            pass  # Table doesn't exist yet — create below.
+        except Exception as exc:
+            _log.debug("Google Ads %s: schema check did not complete: %s", table_name, exc)
 
         table = bq.Table(table_id, schema=schema)
         table.time_partitioning = bq.TimePartitioning(field="metric_date")

@@ -108,8 +108,8 @@ def _resolve_routing(client_slug: str) -> tuple[str | None, str, str | None]:
             db_cfg = client_dashboard_config.get_config(client_slug)
             if db_cfg and db_cfg.gcp_project_id:
                 project = db_cfg.gcp_project_id
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("could not read the dashboard config for %s: %s", client_slug, exc)
     dataset = (dataset or os.getenv("BQ_LINKEDIN_ORGANIC_DATASET_ID") or _DEFAULT_ORGANIC_DATASET).strip()
     return project, dataset, None
 
