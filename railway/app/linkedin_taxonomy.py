@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 _log = logging.getLogger(__name__)
 
@@ -189,11 +190,10 @@ STANDARDIZED_DATA_KINDS = frozenset({"industry", "geo", "country", "title"})
 # re-label it (a static taxonomy may know it now) or drop it, rather than showing
 # a client an id dressed up as a category.
 _UNRESOLVED_LABEL_RE = re.compile(
-    r"^(?:%s)\s+\d+$"
-    % "|".join(
+    r"^(?:{})\s+\d+$".format("|".join(
         re.escape(word)
         for word in sorted(set(REFERENCE_FALLBACK.values()) | {"Seniority", "Function"})
-    )
+    ))
 )
 
 

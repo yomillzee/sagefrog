@@ -19,7 +19,7 @@ import contextlib
 import contextvars
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, UTC
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -241,7 +241,7 @@ def sync_semrush_to_bq(
 
     ensure_semrush_tables()
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     today = date.today().isoformat()
     errors: dict[str, str] = {}
 

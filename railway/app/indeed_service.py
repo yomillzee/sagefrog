@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 
-from indeed_auth import IndeedEnv, load_indeed_env
+from indeed_auth import load_indeed_env
 
 # Indeed API endpoints
 INDEED_OAUTH_URL = "https://secure.indeed.com/oauth/authorize"
@@ -18,7 +17,6 @@ INDEED_API_BASE = "https://api.indeed.com/jobpostings"
 
 class IndeedAPIError(Exception):
     """Raised when Indeed API returns an error."""
-    pass
 
 
 def _get_headers(access_token: str | None = None) -> dict[str, str]:
@@ -72,7 +70,7 @@ def test_token() -> dict[str, Any]:
     try:
         env = load_indeed_env()
         # Try to get a list of organizations (minimal request to validate credentials)
-        response = _make_request(
+        _make_request(
             "GET",
             "/organizations",
             access_token=env.client_id,  # Indeed uses client_id as bearer token for some endpoints
@@ -98,12 +96,12 @@ def list_job_postings(
 ) -> list[dict[str, Any]]:
     """
     Retrieve job postings with title and registration count.
-    
+
     Args:
         account_id: Filter by account/organization ID (optional)
         limit: Max number of postings to return (default 100, max 500)
         status: Filter by status (ACTIVE, DRAFT, PENDING, ARCHIVED, etc.)
-    
+
     Returns:
         List of job posting records with titles and registration counts
     """
@@ -149,10 +147,10 @@ def get_job_posting(
 ) -> dict[str, Any]:
     """
     Retrieve details for a specific job posting including registration count.
-    
+
     Args:
         posting_id: The Indeed posting ID
-    
+
     Returns:
         Job posting details with title, status, and registration count
     """
@@ -191,13 +189,13 @@ def get_registration_analytics(
 ) -> dict[str, Any]:
     """
     Retrieve registration analytics (job titles and registration counts).
-    
+
     Args:
         posting_id: Filter by specific posting (optional)
         account_id: Filter by account/organization (optional)
         date_from: Start date for date range (ISO format, optional)
         date_to: End date for date range (ISO format, optional)
-    
+
     Returns:
         Analytics data with aggregated registration counts by job title
     """

@@ -47,13 +47,13 @@ def _render(*, page_path_filter: str | None = None, is_admin: bool = True) -> st
 
 
 def _tab(html: str, pane: str) -> str:
-    m = re.search(r'<button[^>]*id="tab-%s"[^>]*>' % re.escape(pane), html)
+    m = re.search(rf'<button[^>]*id="tab-{re.escape(pane)}"[^>]*>', html)
     assert m, f"tab button for {pane} not found"
     return m.group(0)
 
 
 def _pane(html: str, pane: str) -> str:
-    m = re.search(r'<div class="pnl-pane" id="%s"[^>]*>' % re.escape(pane), html)
+    m = re.search(rf'<div class="pnl-pane" id="{re.escape(pane)}"[^>]*>', html)
     assert m, f"pane {pane} not found"
     return m.group(0)
 

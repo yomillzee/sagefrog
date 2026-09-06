@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -240,7 +240,7 @@ class StagingReapTests(unittest.TestCase):
         return client, deleted
 
     def test_an_old_orphan_is_deleted_and_real_tables_are_not(self):
-        old = datetime.now(timezone.utc) - timedelta(days=40)
+        old = datetime.now(UTC) - timedelta(days=40)
         tables = [
             types.SimpleNamespace(table_id="fact_gsc_query_daily", modified=old),
             types.SimpleNamespace(table_id="fact_gsc_query_daily_stg_abc", modified=old),
@@ -250,7 +250,7 @@ class StagingReapTests(unittest.TestCase):
         self.assertEqual(deleted, ["proj.raw_gsc.fact_gsc_query_daily_stg_abc"])
 
     def test_a_fresh_staging_table_is_left_for_the_worker_using_it(self):
-        fresh = datetime.now(timezone.utc) - timedelta(minutes=2)
+        fresh = datetime.now(UTC) - timedelta(minutes=2)
         tables = [types.SimpleNamespace(table_id="fact_gsc_page_daily_stg_xyz", modified=fresh)]
         client, deleted = self._client(tables)
         self.assertEqual(g._reap_stale_staging(client, "proj", "raw_gsc"), 0)

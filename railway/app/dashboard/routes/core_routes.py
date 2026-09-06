@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import dashboard_service
 import dashboard_snapshots
@@ -74,7 +74,7 @@ def internal_sync_bq_client(client_slug: str, date_range: str = "LAST_30_DAYS") 
     slug = validate_client_slug(client_slug)
     preset = (date_range or "LAST_30_DAYS").strip().upper().replace("-", "_")
     if preset not in WAREHOUSE_DATE_RANGES:
-        raise HTTPException(status_code=400, detail=f"Invalid date_range.")
+        raise HTTPException(status_code=400, detail="Invalid date_range.")
     try:
         return dashboard_service.refresh_bq_client(slug, date_range=preset, sync_trigger="cron")
     except RuntimeError as e:

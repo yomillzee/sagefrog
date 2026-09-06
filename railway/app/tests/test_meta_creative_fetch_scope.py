@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -135,7 +135,7 @@ class PlanCreativeFetchTests(unittest.TestCase):
         return [{"ad_id": aid} for aid in ad_ids]
 
     def _coverage(self, ages_hours: dict[str, float | None], *, available: bool = True):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         synced_at = {
             aid: (None if age is None else now - timedelta(hours=age))
             for aid, age in ages_hours.items()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, timedelta, UTC
 from typing import Any
 from urllib.parse import quote
 
@@ -385,9 +385,9 @@ def _format_run_schedule_value(value: Any) -> str:
             return f"{parts[0]:04d}-{parts[1]:02d}-{parts[2]:02d}"
         return ""
     if isinstance(value, (int, float)) and value > 0:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).date().isoformat()
+        return datetime.fromtimestamp(float(value) / 1000, tz=UTC).date().isoformat()
     return ""
 
 

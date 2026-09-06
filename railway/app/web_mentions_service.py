@@ -127,7 +127,7 @@ def validate_feed_url(url: str) -> tuple[bool, str]:
     if (os.getenv("WEB_MENTIONS_ALLOW_ANY_FEED") or "").strip().lower() in ("1", "true", "yes"):
         import ipaddress
 
-        if host == "localhost" or host.endswith(".local") or host.endswith(".internal"):
+        if host == "localhost" or host.endswith((".local", ".internal")):
             return False, f"Internal hosts are not allowed: {host}"
         try:
             ip = ipaddress.ip_address(host)

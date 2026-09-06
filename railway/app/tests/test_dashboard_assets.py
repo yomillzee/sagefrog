@@ -35,13 +35,13 @@ from dashboard.renderers.bigquery_dashboard_renderer import (  # noqa: E402
 
 
 def _render(**kwargs) -> str:
-    base = dict(
-        client_slug="demo",
-        api_client_key="demo",
-        label="Demo",
-        use_session=True,
-        session_email="t@e.com",
-    )
+    base = {
+        "client_slug": "demo",
+        "api_client_key": "demo",
+        "label": "Demo",
+        "use_session": True,
+        "session_email": "t@e.com",
+    }
     base.update(kwargs)
     return render_bigquery_dashboard_page(**base)
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import sys
-import types
 import unittest
 from datetime import date
 from pathlib import Path

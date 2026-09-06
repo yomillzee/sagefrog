@@ -400,7 +400,7 @@ def fetch_paid_media_attribution(
 
     events_sql = (
         base
-        + f"""
+        + """
     SELECT
       s.platform,
       e.event_name,

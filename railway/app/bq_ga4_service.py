@@ -12,7 +12,6 @@ import contextlib
 import contextvars
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Any
 
 _log = logging.getLogger(__name__)

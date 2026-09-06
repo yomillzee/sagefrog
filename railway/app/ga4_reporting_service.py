@@ -9,7 +9,7 @@ from the BQ export schema. Do not join these tables to event-level data.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 
 import httpx
@@ -135,7 +135,7 @@ def _parse_date(yyyymmdd: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ── Per-table fetchers ────────────────────────────────────────────────────────

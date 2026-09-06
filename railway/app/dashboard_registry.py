@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import psycopg
 import client_industries
 import db
 import db_migrate

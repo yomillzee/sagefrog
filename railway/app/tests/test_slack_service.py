@@ -50,19 +50,19 @@ SLACK_ENV = {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_FEATURE_REQUEST_CHANNEL": "C123
 
 
 def _req(**over) -> feature_requests.FeatureRequest:
-    base = dict(
-        id=7,
-        client_slug="penn",
-        page_path="/dashboard/penn",
-        page_label="Penn Community Bank",
-        body="Add a dark mode toggle.",
-        scope="global",
-        status="new",
-        created_at="2026-07-26T00:00:00+00:00",
-        created_by="who@agency.com",
-        resolved_at=None,
-        resolved_by=None,
-    )
+    base = {
+        "id": 7,
+        "client_slug": "penn",
+        "page_path": "/dashboard/penn",
+        "page_label": "Penn Community Bank",
+        "body": "Add a dark mode toggle.",
+        "scope": "global",
+        "status": "new",
+        "created_at": "2026-07-26T00:00:00+00:00",
+        "created_by": "who@agency.com",
+        "resolved_at": None,
+        "resolved_by": None,
+    }
     base.update(over)
     return feature_requests.FeatureRequest(**base)
 
@@ -159,7 +159,7 @@ class NotifyTests(unittest.TestCase):
 
 class DoneBlockBuildingTests(unittest.TestCase):
     def _done_req(self, **over):
-        base = dict(status="done", resolved_by="dev@agency.com")
+        base = {"status": "done", "resolved_by": "dev@agency.com"}
         base.update(over)
         return _req(**base)
 
@@ -222,7 +222,7 @@ class DoneBlockBuildingTests(unittest.TestCase):
 
 class NotifyDoneTests(unittest.TestCase):
     def _done_req(self, **over):
-        base = dict(status="done", resolved_by="dev@agency.com")
+        base = {"status": "done", "resolved_by": "dev@agency.com"}
         base.update(over)
         return _req(**base)
 
@@ -336,21 +336,21 @@ class _FakeDB:
 
 
 def _row(**over):
-    base = dict(
-        id=9,
-        client_slug="penn",
-        page_path="/dashboard/penn",
-        page_label="Penn Community Bank",
-        body="Add a dark mode toggle.",
-        scope="global",
-        status="new",
-        created_at=None,
-        created_by="who@agency.com",
-        resolved_at=None,
-        resolved_by=None,
-        slack_channel=None,
-        slack_thread_ts=None,
-    )
+    base = {
+        "id": 9,
+        "client_slug": "penn",
+        "page_path": "/dashboard/penn",
+        "page_label": "Penn Community Bank",
+        "body": "Add a dark mode toggle.",
+        "scope": "global",
+        "status": "new",
+        "created_at": None,
+        "created_by": "who@agency.com",
+        "resolved_at": None,
+        "resolved_by": None,
+        "slack_channel": None,
+        "slack_thread_ts": None,
+    }
     base.update(over)
     return tuple(base.values())
 

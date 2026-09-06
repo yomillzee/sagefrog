@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 from dashboard.utils.dates import mtd_calendar_bounds, paid_daily_spend_map

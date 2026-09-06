@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
 from typing import Any, NamedTuple
 
 import bigquery_service
@@ -61,7 +61,7 @@ def _creative_row_is_stale(synced_at: Any, cutoff: datetime) -> bool:
     if tzinfo == "missing":
         return True
     try:
-        ts = synced_at if tzinfo else synced_at.replace(tzinfo=timezone.utc)
+        ts = synced_at if tzinfo else synced_at.replace(tzinfo=UTC)
         return ts < cutoff
     except (TypeError, ValueError):
         return True
@@ -94,7 +94,7 @@ def _plan_creative_fetch(
         return _CreativePlan("full", (), "creative coverage unreadable")
 
     synced_at = coverage.get("synced_at") or {}
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=_creative_refresh_hours())
+    cutoff = datetime.now(UTC) - timedelta(hours=_creative_refresh_hours())
     stale = sorted(aid for aid in needed if _creative_row_is_stale(synced_at.get(aid), cutoff))
     if not stale:
         return _CreativePlan("skip", (), f"all {len(needed)} ads have fresh creatives")

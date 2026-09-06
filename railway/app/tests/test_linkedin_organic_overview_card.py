@@ -30,12 +30,12 @@ def _sample_series() -> list[dict]:
 
 
 def _report(**over):
-    base = dict(
-        configured=True,
-        total_followers=1200,
-        follower_gain=16,
-        follower_series=_sample_series(),
-    )
+    base = {
+        "configured": True,
+        "total_followers": 1200,
+        "follower_gain": 16,
+        "follower_series": _sample_series(),
+    }
     base.update(over)
     return types.SimpleNamespace(**base)
 

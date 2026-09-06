@@ -303,11 +303,11 @@ class ClientHealthTests(unittest.TestCase):
     """Connector-freshness verdict. TODAY = 2026-07-12 → yesterday 2026-07-11."""
 
     def _h(self, **kw):
-        base = dict(
-            configured=True, spend_available=True, sessions_available=True,
-            fresh_through=dt.date(2026, 7, 11), sessions_through=dt.date(2026, 7, 11),
-            channels=[], today=TODAY,
-        )
+        base = {
+            "configured": True, "spend_available": True, "sessions_available": True,
+            "fresh_through": dt.date(2026, 7, 11), "sessions_through": dt.date(2026, 7, 11),
+            "channels": [], "today": TODAY,
+        }
         base.update(kw)
         return _client_health(**base)
 

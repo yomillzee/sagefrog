@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-import psycopg
 import db
 import db_migrate
 
@@ -1388,8 +1387,10 @@ def normalize_active_weekdays_csv(raw: str | None) -> str | None:
             continue
         try:
             n = int(part)
-        except ValueError:
-            raise ValueError("Active days must be numbers 1 (Mon) through 7 (Sun).")
+        except ValueError as exc:
+            # `from exc` keeps the original parse error in the traceback instead
+            # of it looking like this handler itself failed.
+            raise ValueError("Active days must be numbers 1 (Mon) through 7 (Sun).") from exc
         if 1 <= n <= 7:
             days.add(n)
     if not days:

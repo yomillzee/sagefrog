@@ -33,7 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
 from typing import Any
 from uuid import uuid4
 
@@ -278,7 +278,7 @@ _RATE_LIMIT_REASONS = (
 )
 
 
-def _is_retryable(exc: "GscApiError") -> bool:
+def _is_retryable(exc: GscApiError) -> bool:
     if exc.code in (429, 500, 503):
         return True
     if exc.code != 403:
@@ -412,7 +412,7 @@ def _reap_stale_staging(client, project: str, dataset: str, *, older_than_hours:
     costing storage, and they make it impossible to read __TABLES__ and tell
     what the sync actually wrote.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=older_than_hours)
     removed = 0
     try:
         for tbl in client.list_tables(f"{project}.{dataset}"):
@@ -438,7 +438,7 @@ def _upsert(
     if not rows:
         return 0
     from google.cloud import bigquery as bq
-    stamp     = datetime.now(timezone.utc).isoformat()
+    stamp     = datetime.now(UTC).isoformat()
     payload   = [{**r, stamp_column: stamp} for r in rows]
     temp_id   = f"{table_id}_stg_{uuid4().hex}"
     job_config = bq.LoadJobConfig(schema=schema, write_disposition="WRITE_TRUNCATE")

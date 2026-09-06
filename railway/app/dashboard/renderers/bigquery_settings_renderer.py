@@ -297,7 +297,7 @@ def render_bigquery_settings_page(
     # client's reorderable cards; the write itself stays agency-gated server-side
     # (see annotations_routes.py) regardless of which page holds the control.
     annotations_api = _api_url(f"/dashboard/{client_slug}/annotations", access_key=access_key)
-    timeline_section_html = "" if not session_is_admin else f"""
+    timeline_section_html = "" if not session_is_admin else """
     <section id="sec-timeline">
       <div class="sec-head">
         <h2>Timeline</h2>

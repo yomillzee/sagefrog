@@ -18,7 +18,7 @@ import contextlib
 import contextvars
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, UTC
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -212,7 +212,7 @@ def sync_pagespeed_to_bq(
 
     ensure_pagespeed_tables()
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     today = date.today().isoformat()
 
     snapshot = pagespeed_service.build_pagespeed_snapshot(url, strategy)
@@ -300,7 +300,7 @@ def sync_crux_history_to_bq(
 
     ensure_pagespeed_tables()
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     snapshot = crux_service.build_crux_snapshot(url, strategy)
     if snapshot.get("error"):
         return {"total_rows": 0, "errors": {"crux": snapshot["error"]}}

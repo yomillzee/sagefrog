@@ -69,7 +69,7 @@ def validate_scan_url(url: str) -> tuple[bool, str]:
 
     if _env("SCANNER_ALLOW_PRIVATE_HOSTS", "CONSENT_ALLOW_PRIVATE_HOSTS") not in _TRUE:
         low = host.lower()
-        if low == "localhost" or low.endswith(".local") or low.endswith(".internal"):
+        if low == "localhost" or low.endswith((".local", ".internal")):
             return False, f"Internal hosts are not allowed: {host}"
         try:
             ip = ipaddress.ip_address(host)

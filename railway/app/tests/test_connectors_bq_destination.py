@@ -18,11 +18,11 @@ from dashboard.routes import settings_routes  # noqa: E402
 
 
 def _render(**over) -> str:
-    kw = dict(
-        client_slug="acme", label="Acme", configs=[],
-        use_session=True, session_email="admin@sf.com", session_is_admin=True,
-        bq_project="acme-proj", bq_marts_dataset="marketing_marts",
-    )
+    kw = {
+        "client_slug": "acme", "label": "Acme", "configs": [],
+        "use_session": True, "session_email": "admin@sf.com", "session_is_admin": True,
+        "bq_project": "acme-proj", "bq_marts_dataset": "marketing_marts",
+    }
     kw.update(over)
     return render_connectors_directory(**kw)
 

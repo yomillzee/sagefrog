@@ -8,7 +8,6 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-import psycopg
 import db
 
 import web_users

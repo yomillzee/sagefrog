@@ -1205,16 +1205,15 @@ def render_bigquery_dashboard_page(
     def _aurl(path: str) -> str:
         return _api_url(path, access_key=access_key)
 
-    # Site Performance (PageSpeed Insights) tab — HTML/CSS/JS injected below. The
-    # pane is always emitted (like Search Console); the sidebar nav button is what
-    # gates on the pagespeed connector (see base_layout.platform_nav_flags).
+    # Site Performance (PageSpeed Insights) tab — the markup goes in below; its
+    # CSS and JS are composed into the cached assets (see dashboard/assets.py).
+    # The pane is always emitted (like Search Console); the sidebar nav button is
+    # what gates on the pagespeed connector (see base_layout.platform_nav_flags).
     pagespeed_pane_html = pagespeed_renderer.pane_html()
-    pagespeed_pane_js = pagespeed_renderer.pane_js()
 
     # Google Business Profile tab — same deal: the pane is always emitted and the
     # sidebar nav button gates on the google_business connector.
     google_business_pane_html = google_business_renderer.pane_html()
-    google_business_pane_js = google_business_renderer.pane_js()
 
     # No paid-ad connector (google/linkedin/meta) -- the paid Summary/Trends
     # cards have no BQ mart to read and would otherwise render a zeroed-out
@@ -1297,7 +1296,7 @@ def render_bigquery_dashboard_page(
     # and visibility are managed by admins in edit mode (entered from the sidebar
     # kebab); see the layout handling and _ov_unit_wrapper below.
 
-    panel_website = f"""
+    panel_website = """
       <section class="ov-panel">
         <div class="sec-head"><h2>Website analytics</h2><div class="ov-actions"><span class="status" id="ovSessionsStatus"></span><div class="chips seg" id="ovSeGranChips"><button type="button" class="chip" data-gran="daily">Daily</button><button type="button" class="chip active" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="analytics"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards metric-cards" id="ovSeCards" style="margin-bottom:12px"></div>
@@ -1305,7 +1304,7 @@ def render_bigquery_dashboard_page(
         <div class="cmp-legend" id="ovSessionsLegend"></div>
       </section>"""
 
-    panel_ai = f"""
+    panel_ai = """
       <section class="ov-panel">
         <div class="sec-head"><h2>AI traffic</h2><div class="ov-actions"><span class="status" id="ovAiStatus"></span><div class="chips seg" id="ovAiGranChips"><button type="button" class="chip active" data-gran="daily">Daily</button><button type="button" class="chip" data-gran="weekly">Weekly</button></div><button type="button" class="ov-more" aria-label="See more" data-goto="ai_traffic"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="chart-wrap"><div class="chart-canvas-host" style="height:220px"><canvas id="ovAiTrend"></canvas></div></div>
@@ -1333,7 +1332,7 @@ def render_bigquery_dashboard_page(
         </div>
       </section>"""
 
-    panel_pagespeed = f"""
+    panel_pagespeed = """
       <section class="ov-panel">
         <div class="sec-head"><h2>Site performance</h2><div class="ov-actions"><span class="status" id="ovPsStatus"></span><button type="button" class="ov-more" aria-label="See more" data-goto="site_performance"><svg class="ov-more-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg></button></div></div>
         <div class="cards" id="ovPsScores"></div>

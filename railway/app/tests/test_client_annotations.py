@@ -165,14 +165,14 @@ class DateRangeTests(unittest.TestCase):
 
 class AnnotationShapeTests(unittest.TestCase):
     def _anno(self, **over):
-        base = dict(
-            id=3, client_slug="penn", event_date="2026-03-12", end_date=None,
-            title="Site migration", body="New CMS went live.", category="website",
-            visibility="internal", charts="both",
-            created_at="2026-03-12T00:00:00+00:00",
-            updated_at="2026-03-12T00:00:00+00:00",
-            created_by="a@x.com", updated_by="a@x.com",
-        )
+        base = {
+            "id": 3, "client_slug": "penn", "event_date": "2026-03-12", "end_date": None,
+            "title": "Site migration", "body": "New CMS went live.", "category": "website",
+            "visibility": "internal", "charts": "both",
+            "created_at": "2026-03-12T00:00:00+00:00",
+            "updated_at": "2026-03-12T00:00:00+00:00",
+            "created_by": "a@x.com", "updated_by": "a@x.com",
+        }
         base.update(over)
         return client_annotations.Annotation(**base)
 

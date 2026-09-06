@@ -411,18 +411,12 @@ def compute_agency_budget(
         # freshest paid date overall (max across channels) grades the client;
         # the per-channel through-dates feed the chip tooltip so the culprit is
         # visible. All from the rows already loaded — no extra reads.
-        fresh_map = {
-            slug: mx
-            for slug, mx in con.execute(
+        fresh_map = dict(con.execute(
                 "SELECT client_slug, MAX(metric_date) FROM d GROUP BY client_slug"
-            ).fetchall()
-        }
-        sess_fresh_map = {
-            slug: mx
-            for slug, mx in con.execute(
+            ).fetchall())
+        sess_fresh_map = dict(con.execute(
                 "SELECT client_slug, MAX(metric_date) FROM s GROUP BY client_slug"
-            ).fetchall()
-        }
+            ).fetchall())
         chan_map: dict[str, list[dict[str, Any]]] = {}
         for slug, src, mx, sp in con.execute(
             """

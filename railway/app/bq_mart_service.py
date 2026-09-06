@@ -600,7 +600,7 @@ def build_snapshot(
     google_ad_rows: list[dict[str, Any]] = []
     linkedin_rows: list[dict[str, Any]] = []
 
-    _bq_kwargs = dict(client_key=client_key, bq_project_id=bq_project_id, bq_dataset_id=bq_dataset_id, credentials_env=credentials_env)
+    _bq_kwargs = {"client_key": client_key, "bq_project_id": bq_project_id, "bq_dataset_id": bq_dataset_id, "credentials_env": credentials_env}
 
     def _collect(fut, error_key: str) -> list[dict[str, Any]]:
         """Resolve a mart future; missing table → empty, real error → recorded."""

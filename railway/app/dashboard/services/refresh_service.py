@@ -14,6 +14,7 @@ from dates_util import resolve_date_range
 from dashboard_config import DashboardConfig
 
 from dashboard.services.warehouse_metrics_service import sync_meta
+from datetime import UTC
 
 
 def patch_snapshot_from_config(cfg: DashboardConfig) -> None:
@@ -115,7 +116,7 @@ def refresh_bq_client(
     # snapshot fetch is a *second* live hit on top of the connector sync the
     # orchestrator just ran above, so the two cadences have to match or this
     # one silently sets the real spend rate.
-    from datetime import datetime, timezone as _tz
+    from datetime import datetime
     from connectors.semrush import sync_interval_days as _smr_interval_days
     _existing = dashboard_snapshots.get_snapshot(slug) or {}
     _cached_smr = _existing.get("semrush") or {}
@@ -124,7 +125,7 @@ def refresh_bq_client(
         _fetched = _cached_smr.get("fetched_at")
         if _fetched:
             _smr_age_hours = (
-                datetime.now(_tz.utc) - datetime.fromisoformat(_fetched)
+                datetime.now(UTC) - datetime.fromisoformat(_fetched)
             ).total_seconds() / 3600
     except Exception:
         pass

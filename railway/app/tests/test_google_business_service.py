@@ -216,7 +216,7 @@ class LocationTests(unittest.TestCase):
              patch.object(gbs, "_get", side_effect=pages):
             locs = gbs.list_locations("refresh", "accounts/1")
 
-        self.assertEqual([l["name"] for l in locs], ["A", "B"])
+        self.assertEqual([loc["name"] for loc in locs], ["A", "B"])
 
 
 class ReviewTests(unittest.TestCase):

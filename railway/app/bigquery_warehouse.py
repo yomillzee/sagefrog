@@ -7,7 +7,7 @@ import contextvars
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import Any
 from uuid import uuid4
 
@@ -283,7 +283,7 @@ def mirror_metrics_daily_batch(source: str, account_id: str, rows: list[dict[str
     account_id_clean = str(account_id).strip().split(":")[-1]
     client, table_id = _target(source_key)
     ensure_table(source_key)
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = _aggregate_daily_metrics(source_key, account_id_clean, rows, synced_at)
     if not payload:
         return {"enabled": True, "rows_upserted": 0, "table": table_id}
@@ -333,7 +333,7 @@ def mirror_campaign_daily_batch(source: str, account_id: str, rows: list[dict[st
     table.clustering_fields = ["source", "account_id", "campaign_id"]
     client.create_table(table, exists_ok=True)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         metric_date = row.get("metric_date")
@@ -509,7 +509,7 @@ def mirror_microsoft_ad_daily_batch(account_id: str, rows: list[dict[str, Any]])
     except Exception:
         _log.warning("Microsoft ad_daily schema sync skipped for %s", table_id, exc_info=True)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     cols = [f.name for f in schema]
     payload = []
     for row in rows:
@@ -619,7 +619,7 @@ def mirror_microsoft_goal_daily_batch(
     table.clustering_fields = ["source", "account_id", "campaign_id", "ad_group_id"]
     client.create_table(table, exists_ok=True)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     days: set[str] = set()
     for row in rows:
@@ -950,7 +950,7 @@ def mirror_linkedin_campaign_metadata(rows: list[dict[str, Any]]) -> dict[str, A
 
     client, table_id = _campaigns_table_id()
     ensure_linkedin_campaigns_table()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         account_id = str(row.get("account_id") or "").strip().split(":")[-1]
@@ -1161,7 +1161,7 @@ def mirror_linkedin_ad_daily_batch(
     t.clustering_fields = ["source", "account_id", "creative_id"]
     client.create_table(t, exists_ok=True)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         crid = str(row.get("creative_id") or "").strip()
@@ -1224,7 +1224,7 @@ def mirror_linkedin_creative_metadata(rows: list[dict[str, Any]]) -> dict[str, A
     t.clustering_fields = ["source", "account_id", "creative_id"]
     client.create_table(t, exists_ok=True)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         account_id = str(row.get("account_id") or "").strip().split(":")[-1]
@@ -1430,7 +1430,7 @@ def mirror_meta_campaign_daily_batch(account_id: str, rows: list[dict[str, Any]]
     table_id = _ensure_meta_table(_DEFAULT_META_CAMPAIGN_TABLE, _meta_campaign_daily_schema())
     client = _meta_client()
     bigquery = _bigquery()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         cid = str(row.get("campaign_id") or "").strip()
@@ -1487,7 +1487,7 @@ def mirror_meta_adset_daily_batch(account_id: str, rows: list[dict[str, Any]], *
     table_id = _ensure_meta_table(_DEFAULT_META_ADSET_TABLE, _meta_adset_daily_schema())
     client = _meta_client()
     bigquery = _bigquery()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         asid = str(row.get("adset_id") or "").strip()
@@ -1546,7 +1546,7 @@ def mirror_meta_ad_daily_batch(account_id: str, rows: list[dict[str, Any]], *, c
     table_id = _ensure_meta_table(_DEFAULT_META_AD_TABLE, _meta_ad_daily_schema())
     client = _meta_client()
     bigquery = _bigquery()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         aid = str(row.get("ad_id") or "").strip()
@@ -1626,7 +1626,7 @@ def mirror_meta_ad_creative_batch(account_id: str, rows: list[dict[str, Any]], *
     table_id = _ensure_meta_table(_DEFAULT_META_AD_CREATIVE_TABLE, _meta_ad_creative_schema())
     client = _meta_client()
     bigquery = _bigquery()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         aid = str(row.get("ad_id") or "").strip()
@@ -1739,7 +1739,7 @@ def mirror_meta_ad_conversion_action_batch(
     )
     client = _meta_client()
     bigquery = _bigquery()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     days: set[str] = set()
     for row in rows:
@@ -2006,7 +2006,7 @@ def mirror_linkedin_ads_demographics(
     client.create_table(t, exists_ok=True)
     _sync_table_columns(client, table_id, schema)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         category_urn = str(row.get("category_urn") or "").strip()
@@ -2245,7 +2245,7 @@ def mirror_linkedin_post_stats(org_id: str, rows: list[dict[str, Any]]) -> dict[
     client.create_table(t, exists_ok=True)
     _sync_table_columns(client, table_id, schema)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         post_id = str(row.get("post_id") or "").strip()
@@ -2319,7 +2319,7 @@ def mirror_linkedin_follower_daily(org_id: str, rows: list[dict[str, Any]]) -> d
     t.clustering_fields = ["source", "org_id"]
     client.create_table(t, exists_ok=True)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         metric_date = str(row.get("metric_date") or "")[:10]
@@ -2382,7 +2382,7 @@ def mirror_linkedin_page_daily(org_id: str, rows: list[dict[str, Any]]) -> dict[
     client.create_table(t, exists_ok=True)
     _sync_table_columns(client, table_id, schema)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         metric_date = str(row.get("metric_date") or "")[:10]
@@ -2483,7 +2483,7 @@ def mirror_linkedin_follower_demographics(org_id: str, rows: list[dict[str, Any]
     client.create_table(t, exists_ok=True)
     _sync_table_columns(client, table_id, schema)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         category_urn = str(row.get("category_urn") or "").strip()
@@ -2549,7 +2549,7 @@ def mirror_linkedin_engagement_daily(org_id: str, rows: list[dict[str, Any]]) ->
     client.create_table(t, exists_ok=True)
     _sync_table_columns(client, table_id, schema)
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = datetime.now(UTC).isoformat()
     payload = []
     for row in rows:
         metric_date = str(row.get("metric_date") or "")[:10]

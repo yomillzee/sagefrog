@@ -6,7 +6,6 @@ import os
 from datetime import date, timedelta
 from typing import Any
 
-import psycopg
 import db
 
 SCHEMA_SQL_STATEMENTS = [
@@ -222,7 +221,7 @@ def query_metrics(
     with db.connection() as conn:
         cur = conn.execute(sql, params)
         cols = [d.name for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
 
 def upsert_campaign_daily_batch(
@@ -306,7 +305,7 @@ def query_campaign_daily(
     with db.connection() as conn:
         cur = conn.execute(sql, (source_key, account_id_clean, from_date, to_date))
         cols = [d.name for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
 
 def account_date_coverage(source: str, account_id: str) -> dict[str, Any]:
