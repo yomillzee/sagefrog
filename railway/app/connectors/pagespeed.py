@@ -4,6 +4,12 @@ No OAuth: PSI works keyless (or with a single shared PAGESPEED_API_KEY env var,
 agency-level like SEMRUSH_API_KEY). The only per-client input is the URL to
 audit, entered manually in the wizard (there's no "list accounts" API) and
 stored as source_account_id. Strategy defaults to desktop (PAGESPEED_STRATEGY).
+
+Each sync writes two things for that one URL: the Lighthouse lab audit (PSI) and
+the real-user weekly history for its origin (CrUX, see crux_service). They are
+separate Google APIs, so the sync runs both independently — a flaky Lighthouse
+run shouldn't cost the client their field data, and an origin too small for CrUX
+shouldn't look like a broken connector.
 """
 
 from __future__ import annotations
@@ -88,6 +94,16 @@ class PageSpeedConnector(ConnectorHandler):
                     total_rows += result.get("total_rows") or 0
                     for k, v in (result.get("errors") or {}).items():
                         errors[f"{strat}:{k}"] = v
+                    # Real-user history from the CrUX API — same origin, same
+                    # cadence, but a different API, so a Lighthouse failure
+                    # above must not skip it (and vice versa). An origin with
+                    # too little traffic simply returns 0 rows.
+                    crux = bq_pagespeed_service.sync_crux_history_to_bq(
+                        url, client_key=client_slug, strategy=strat
+                    )
+                    total_rows += crux.get("total_rows") or 0
+                    for k, v in (crux.get("errors") or {}).items():
+                        errors[f"{strat}:crux:{k}"] = v
             error_msg = "; ".join(f"{k}: {v}" for k, v in errors.items()) if errors else None
             return SyncResult(rows_loaded=total_rows, error=error_msg)
         except Exception as exc:

@@ -154,6 +154,12 @@ def _service_account_auth() -> tuple[str, str | None] | None:
         return None
 
 
+# Public alias: crux_service authenticates the same way against the same Google
+# project, and sharing this keeps one cached credential rather than minting a
+# second token per sync.
+service_account_auth = _service_account_auth
+
+
 def normalize_url(url: str) -> str:
     """Coerce a user-entered URL into something PSI accepts (needs a scheme)."""
     u = (url or "").strip()

@@ -17,7 +17,7 @@ import meta_auth
 
 _log = logging.getLogger(__name__)
 
-PLATFORMS = frozenset({"google_ads", "linkedin", "linkedin_organic", "meta", "gsc", "google_analytics", "google_tag_manager", "hubspot", "harvest", "microsoft_ads"})
+PLATFORMS = frozenset({"google_ads", "linkedin", "linkedin_organic", "meta", "gsc", "google_analytics", "google_tag_manager", "google_business", "hubspot", "harvest", "microsoft_ads"})
 
 HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize"
 HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
@@ -50,6 +50,10 @@ GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
 GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 GTM_SCOPE = "https://www.googleapis.com/auth/tagmanager.readonly"
+# One scope covers all four Business Profile hosts (account management,
+# business information, performance, and the legacy v4 reviews endpoint).
+# There is no read-only variant — Google only publishes business.manage.
+GOOGLE_BUSINESS_SCOPE = "https://www.googleapis.com/auth/business.manage"
 
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
@@ -284,6 +288,25 @@ def connect_prerequisites(platform: str) -> dict[str, Any]:
                 "that has Read access to the GTM container."
             ),
         }
+    if slug == "google_business":
+        summary = google_auth.env_summary()
+        return {
+            "ready": bool(summary.get("has_client_id") and summary.get("has_client_secret")),
+            "missing": [
+                label
+                for key, label in (
+                    ("has_client_id", "GOOGLE_ADS_CLIENT_ID"),
+                    ("has_client_secret", "GOOGLE_ADS_CLIENT_SECRET"),
+                )
+                if not summary.get(key)
+            ],
+            "note": (
+                "Reuses the Google Ads OAuth client. Connect with the Google account that "
+                "manages the client's Business Profile. Google must also approve Business "
+                "Profile API access for the Cloud project — until it does, every call "
+                "returns 429 on a zero quota."
+            ),
+        }
     if slug == "linkedin":
         summary = linkedin_auth.env_summary()
         return {
@@ -440,6 +463,20 @@ def build_authorize_url(platform: str, *, state: str) -> str:
             "state": state,
         }
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    if slug == "google_business":
+        client_id = google_auth._get_env(*google_auth._ENV_ALIASES["client_id"])
+        if not client_id:
+            raise RuntimeError("Set GOOGLE_ADS_CLIENT_ID before connecting Google Business Profile.")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": GOOGLE_BUSINESS_SCOPE,
+            "access_type": "offline",
+            "prompt": "select_account consent",
+            "state": state,
+        }
+        return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
     if slug == "linkedin":
         client_id = linkedin_auth._get_env(*linkedin_auth._ENV_ALIASES["client_id"])
         if not client_id:
@@ -533,6 +570,8 @@ def exchange_code(platform: str, *, code: str) -> dict[str, Any]:
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GA4_SCOPE)
     if slug == "google_tag_manager":
         return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GTM_SCOPE)
+    if slug == "google_business":
+        return _exchange_google_code(code, redirect_uri=redirect_uri, scope_label=GOOGLE_BUSINESS_SCOPE)
     if slug == "linkedin":
         return _exchange_linkedin_code(code, redirect_uri=redirect_uri)
     if slug == "linkedin_organic":

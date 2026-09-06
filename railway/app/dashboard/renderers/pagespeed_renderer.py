@@ -75,6 +75,19 @@ def pane_html() -> str:
         <div class="sec-head"><h2>Core Web Vitals</h2></div>
         <div class="cards" id="psCwv"></div>
       </section>
+      <section id="sec-ps-field">
+        <div class="sec-head">
+          <h2>Real visitors (last 6 months)</h2>
+          <span class="status" id="psFieldStatus"></span>
+        </div>
+        <div class="ps-field-intro">
+          What Chrome users actually experienced on this site, from Google's Chrome UX Report.
+          The cards above are a single lab test; these are real visits, and Google uses
+          <strong>these</strong> numbers for search. Each point is a 28-day average, stepped weekly.
+        </div>
+        <div id="psAssessment"></div>
+        <div class="cards" id="psFieldCards"></div>
+      </section>
       <section id="sec-ps-trend">
         <div class="sec-head"><h2>Score trend</h2></div>
         <div class="ps-legend">
@@ -134,7 +147,7 @@ def pane_css() -> str:
     .ps-trend-pulse { flex-shrink:0; width:11px; height:11px; border-radius:50%; background:var(--accent, #1d6fd0); box-shadow:0 0 0 0 rgba(29,111,208,.5); animation:psTrendPulse 1.9s cubic-bezier(.4,0,.2,1) infinite; }
     @keyframes psTrendPulse { 0% { box-shadow:0 0 0 0 rgba(29,111,208,.45); } 70% { box-shadow:0 0 0 11px rgba(29,111,208,0); } 100% { box-shadow:0 0 0 0 rgba(29,111,208,0); } }
     /* ---- Core Web Vitals sparklines + health ---- */
-    #psCwv .card { display:flex; flex-direction:column; }
+    #psCwv .card, #psFieldCards .card { display:flex; flex-direction:column; }
     .ps-spark { margin-top:10px; height:26px; }
     .ps-spark svg { display:block; width:100%; height:100%; }
     .ps-spark--empty { position:relative; }
@@ -142,8 +155,32 @@ def pane_css() -> str:
     /* The goal now lives inside the sparkline as a dashed benchmark line, so
        the card's hover tooltip carries the numbers (goal + full bands). */
     .ps-spark { cursor:help; }
+    /* ---- Real-user (CrUX) field data ---- */
+    .ps-field-intro { font-size:.82rem; color:var(--muted); line-height:1.55; margin:-4px 0 14px; max-width:78ch; }
+    .ps-field-intro strong { color:var(--text); font-weight:700; }
+    /* Pass/fail strip: Google's own Core Web Vitals assessment (LCP + INP + CLS
+       all at or under "good" at the 75th percentile), stated in one line rather
+       than left for someone to work out from three cards. */
+    .ps-assess { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 16px; border:1px solid var(--line); border-left-width:4px; border-radius:10px; margin-bottom:14px; background:var(--row-alt, #f8fafc); }
+    .ps-assess--pass { border-left-color:#0c9d61; }
+    .ps-assess--fail { border-left-color:#e5484d; }
+    .ps-assess--none { border-left-color:var(--line); }
+    .ps-assess-verdict { font-size:.92rem; font-weight:700; color:var(--navy, #0a2540); }
+    .ps-assess--pass .ps-assess-verdict { color:#0a7a4c; }
+    .ps-assess--fail .ps-assess-verdict { color:#c3363b; }
+    .ps-assess-detail { font-size:.79rem; color:var(--muted); }
+    /* Distribution bar: the good / needs-improvement / poor split of real visits.
+       The p75 headline says where the slow tail sits; this says how many people
+       are in it. */
+    .ps-dist { display:flex; height:6px; border-radius:3px; overflow:hidden; margin-top:10px; background:var(--line); }
+    .ps-dist span { display:block; height:100%; }
+    .ps-dist-good { background:#0c9d61; }
+    .ps-dist-ni { background:#e8a13a; }
+    .ps-dist-poor { background:#e5484d; }
+    .ps-dist-legend { display:flex; justify-content:space-between; margin-top:5px; font-size:.7rem; color:var(--muted); }
+    .ps-field-empty { padding:16px; border:1px dashed var(--line); border-radius:10px; font-size:.84rem; color:var(--muted); line-height:1.55; }
     /* ---- Per-card "what does this mean?" tooltips ---- */
-    #psScores .card-title, #psCwv .card-title, #ovPsScores .card-title { display:flex; align-items:center; gap:5px; }
+    #psScores .card-title, #psCwv .card-title, #psFieldCards .card-title, #ovPsScores .card-title { display:flex; align-items:center; gap:5px; }
     .ps-info { appearance:none; flex-shrink:0; width:14px; height:14px; padding:0; display:inline-flex; align-items:center;
       justify-content:center; border:1px solid var(--line); border-radius:50%; background:#fff; color:var(--muted);
       font:inherit; font-size:.6rem; font-weight:800; line-height:1; cursor:help; transition:color .12s, border-color .12s; }
@@ -346,6 +383,7 @@ def pane_js() -> str:
           `<div class="card-value"${valStyle}>${v}</div>` +
           psSparkline(hist.map(r => r[key]), h.color, goal, h.rangeTitle) + `</div>`;
       }).join('');
+      psRenderCrux(p.crux_history);
       const hasCurrent = ['performance', 'accessibility', 'best_practices', 'seo'].some(k => p[k] != null);
       if (hist.length > 1) {
         psClearTrendState();
@@ -362,6 +400,110 @@ def pane_js() -> str:
         psRenderTrendSkeleton();    // no reading yet: shimmer placeholder
       }
     }
+    // ---- Real visitors (Chrome UX Report field data) ----
+    // [label, column prefix, thresholds, is a Core Web Vital]. The three CWVs
+    // decide the pass/fail assessment; FCP and TTFB are supporting context.
+    // Thresholds are Google's own, and mirror crux_service.THRESHOLDS server-side.
+    const PS_CRUX_METRICS = [
+      ['Largest Contentful Paint', 'lcp',  { good: 2500, ni: 4000, ms: true },  true],
+      ['Interaction to Next Paint', 'inp', { good: 200,  ni: 500,  ms: true },  true],
+      ['Cumulative Layout Shift', 'cls',   { good: 0.1,  ni: 0.25, ms: false }, true],
+      ['First Contentful Paint', 'fcp',    { good: 1800, ni: 3000, ms: true },  false],
+      ['Time to First Byte', 'ttfb',       { good: 800,  ni: 1800, ms: true },  false],
+    ];
+    const PS_CRUX_TIPS = {
+      lcp: 'How long real visitors waited for the main content to appear. Google counts this as a search ranking signal.',
+      inp: 'How quickly the page responded when real visitors tapped or clicked. Replaced First Input Delay as a ranking signal.',
+      cls: 'How much the page shifted under real visitors while it loaded. Counts for ranking.',
+      fcp: 'How long real visitors stared at a blank screen before anything appeared.',
+      ttfb: 'How long the server took to send the first byte. High numbers here make every other metric worse.',
+    };
+    // A metric "passes" when its 75th percentile is inside the good band —
+    // i.e. at least 75% of real visits were good. Same rule Google applies.
+    function psCruxBand(v, t) {
+      if (v == null || !isFinite(Number(v))) return { color: null, label: 'No data' };
+      v = Number(v);
+      if (v <= t.good) return { color: '#0c9d61', label: 'Good', pass: true };
+      if (v <= t.ni)   return { color: '#e8a13a', label: 'Needs improvement', pass: false };
+      return                 { color: '#e5484d', label: 'Poor', pass: false };
+    }
+    function psCruxFmt(v, ms) {
+      if (v == null || !isFinite(Number(v))) return '—';
+      return ms ? psMs(Number(v)) : (Math.round(Number(v) * 1000) / 1000);
+    }
+    function psPct(v) {
+      return (v == null || !isFinite(Number(v))) ? null : Math.round(Number(v) * 100);
+    }
+    // good/needs-improvement/poor split of real visits, as a stacked bar. The
+    // headline p75 says how slow the tail is; this says how many people are in it.
+    function psDistBar(good, ni, poor) {
+      const g = psPct(good), n = psPct(ni), p = psPct(poor);
+      if (g == null && n == null && p == null) return '';
+      const w = x => (x == null ? 0 : x);
+      return `<div class="ps-dist" role="img" aria-label="${w(g)}% good, ${w(n)}% needs improvement, ${w(p)}% poor">` +
+        `<span class="ps-dist-good" style="width:${w(g)}%"></span>` +
+        `<span class="ps-dist-ni" style="width:${w(n)}%"></span>` +
+        `<span class="ps-dist-poor" style="width:${w(p)}%"></span></div>` +
+        `<div class="ps-dist-legend"><span>${w(g)}% good</span><span>${w(p)}% poor</span></div>`;
+    }
+    function psRenderCrux(hist) {
+      const cards = document.getElementById('psFieldCards');
+      const assess = document.getElementById('psAssessment');
+      if (!cards || !assess) return;
+      hist = hist || [];
+      if (!hist.length) {
+        assess.innerHTML = '';
+        cards.innerHTML =
+          '<div class="ps-field-empty">No real-user data for this site yet. Google only reports Chrome UX ' +
+          'Report data once an origin has enough Chrome traffic, so smaller sites can sit below the ' +
+          'threshold. The lab scores above still work.</div>';
+        setStatus('psFieldStatus', '');
+        return;
+      }
+      const latest = hist[hist.length - 1];
+      // Pass/fail on the three Core Web Vitals, Google's own definition: every
+      // one of LCP, INP and CLS must be inside its good band at p75.
+      const cwv = PS_CRUX_METRICS.filter(m => m[3]);
+      const bands = cwv.map(([, key, t]) => psCruxBand(latest[key + '_p75'], t));
+      const measured = bands.filter(b => b.pass !== undefined);
+      const failing = cwv.filter((m, i) => bands[i].pass === false).map(m => m[0]);
+      let cls = 'ps-assess--none', verdict = 'Not enough data to assess', detail = '';
+      if (measured.length === cwv.length) {
+        if (!failing.length) {
+          cls = 'ps-assess--pass';
+          verdict = 'Passing Core Web Vitals';
+          detail = 'All three of Google\\'s ranking metrics are in the good range for real visitors.';
+        } else {
+          cls = 'ps-assess--fail';
+          verdict = 'Not passing Core Web Vitals';
+          detail = 'Failing on ' + failing.join(' and ') + '. Google needs all three in the good range.';
+        }
+      } else if (measured.length) {
+        detail = 'Google reports only some metrics for this site — usually a traffic threshold.';
+      }
+      const period = latest.period_end
+        ? `28 days to ${esc(String(latest.period_end))}` : '';
+      assess.innerHTML = `<div class="ps-assess ${cls}">` +
+        `<span class="ps-assess-verdict">${esc(verdict)}</span>` +
+        `<span class="ps-assess-detail">${esc(detail)}</span></div>`;
+      cards.innerHTML = PS_CRUX_METRICS.map(([label, key, t]) => {
+        const v = latest[key + '_p75'];
+        const band = psCruxBand(v, t);
+        const valStyle = band.color ? ` style="color:${band.color}"` : '';
+        const series = hist.map(r => r[key + '_p75']);
+        const goalTip = `Goal: ${psCruxFmt(t.good, t.ms)} or less  ·  Needs improvement: up to ` +
+          `${psCruxFmt(t.ni, t.ms)}  ·  Poor: over ${psCruxFmt(t.ni, t.ms)}` +
+          `\\nDotted line is the goal. 75th percentile — 3 in 4 visits were at least this fast.`;
+        return `<div class="card"><div class="card-title">${esc(label)}${psInfo(PS_CRUX_TIPS[key])}</div>` +
+          `<div class="card-value"${valStyle}>${psCruxFmt(v, t.ms)}</div>` +
+          `<div class="ps-target">${band.color ? `<span class="ps-light" style="background:${band.color}"></span>` : ''}${esc(band.label)}</div>` +
+          psSparkline(series, band.color, t.good, goalTip) +
+          psDistBar(latest[key + '_good'], latest[key + '_ni'], latest[key + '_poor']) +
+          `</div>`;
+      }).join('');
+      setStatus('psFieldStatus', period ? `${hist.length} weeks · ${period}` : `${hist.length} weeks`);
+    }
+
     // ---- "Scores over time" empty states ----
     // A single PSI reading (or none) can't draw a trend, so instead of a blank
     // canvas we show where the trend is heading: the reading anchored on the
@@ -470,6 +612,7 @@ def pane_js() -> str:
       setStatus('psStatus', 'Loading…');
       document.getElementById('psScores').innerHTML = skelCards(4);
       document.getElementById('psCwv').innerHTML = skelCards(6);
+      document.getElementById('psFieldCards').innerHTML = skelCards(5);
       const url = PAGESPEED_API + (PAGESPEED_API.includes('?') ? '&' : '?') + 'strategy=' + strategy;
       try {
         const p = await getJson(url);

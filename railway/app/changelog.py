@@ -62,6 +62,53 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-06",
+        title="Google Business Profile is now a connector and a dashboard tab",
+        area="Client dashboards · Google Business",
+        kind="new",
+        summary=(
+            "Clients with physical locations get a Google Business tab showing how "
+            "many people saw their listing on Search and Maps, what those people did "
+            "about it — calls, website clicks, direction requests, messages — and "
+            "their reviews, including how many are still waiting for a reply."
+        ),
+        details=(
+            "None of this reaches website analytics, because the activity happens on "
+            "Google rather than on the client's site.",
+            "The tab shows whether people are finding the listing on Maps or in "
+            "Search, and how much of that is on a phone.",
+            "Multi-location clients get a per-location breakdown; single-location "
+            "ones don't see a redundant table.",
+            "Reviews ignore the date picker on purpose — an unanswered one-star "
+            "review from last month should not disappear when you look at this month.",
+            "Google has to approve API access for the agency's Google Cloud project "
+            "before the first sync returns anything; until it does, the connector "
+            "says so in plain words rather than looking broken.",
+        ),
+    ),
+    Entry(
+        date="2026-09-06",
+        title="Site Performance now shows six months of real visitor data",
+        area="Client dashboards · Site Performance",
+        kind="new",
+        summary=(
+            "A new “Real visitors” section reports what Chrome users actually "
+            "experienced on the site over the last six months — and says plainly "
+            "whether the site passes the Core Web Vitals that Google uses for search "
+            "ranking."
+        ),
+        details=(
+            "The history arrives complete on the first sync, so a newly connected "
+            "client sees six months immediately instead of waiting for one to build.",
+            "The scores at the top of the tab are still a single lab test; this "
+            "section is real visits, and the two routinely disagree.",
+            "Each metric shows how many visits were good, needs-improvement or poor "
+            "— not just the headline number.",
+            "Sites with too little Chrome traffic aren't covered by Google's data; "
+            "the section says so rather than showing an error.",
+        ),
+    ),
+    Entry(
         date="2026-08-31",
         title="Demographics map can switch to a world view",
         area="Client dashboards · Website Analytics",

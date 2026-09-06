@@ -97,6 +97,7 @@ CONNECTOR_ORDER = [
     "ga4",
     "gsc",
     "gtm",
+    "google_business",
     "hubspot",
     "semrush",
     "pagespeed",
