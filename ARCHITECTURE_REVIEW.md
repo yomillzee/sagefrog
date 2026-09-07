@@ -1,6 +1,8 @@
 # Architecture Review: Sagefrog Marketing Analytics Platform
 
-_Reviewed: June 15, 2026_
+_Reviewed: June 15, 2026. Technical Debt and Areas of Risk rewritten against
+the tree on 7 September 2026; the descriptive sections above them were checked
+at the same time._
 
 ---
 
@@ -64,15 +66,19 @@ All CSS is custom and inline. There is no CSS framework (no Tailwind, Bootstrap,
 - **Language**: Python 3
 - **Framework**: FastAPI (ASGI)
 - **Server**: Uvicorn (`uvicorn main:app --host 0.0.0.0 --port $PORT`)
-- **Entry point**: `railway/app/main.py` (~1,986 lines)
+- **Entry point**: `railway/app/main.py` (1,865 lines — app construction, the
+  login and OAuth flows, and the `/admin` pages that have not moved yet)
 
 ### Module Structure
 
-The backend is organized into flat modules at the `railway/app/` level with a partially refactored `dashboard/` sub-package:
+The backend is flat modules at the `railway/app/` level plus three route
+packages — `dashboard/`, `admin/` and `platforms/` — each attached to the app by
+a single register call from `main.py`:
 
 ```
 railway/app/
-  main.py                        # FastAPI app + all non-dashboard routes
+  main.py                        # FastAPI app, middleware, login + OAuth flows,
+                                 #   and the /admin pages not yet moved
   models.py                      # All Pydantic request/response schemas
   
   # Platform integrations
@@ -95,21 +101,34 @@ railway/app/
   penn_config.py / penn_business_lines.py / client_config.py
   client_dashboard_config.py / dashboard_registry.py / business_line_rules.py
   
-  # Dashboard (refactored sub-package)
+  # Route packages — each registered by one call from main.py
   dashboard/
     routes/        # FastAPI handlers (core, settings, files)
     services/      # Refresh, warehouse sync, snapshot metrics
     renderers/     # HTML generation
     utils/         # Formatting, URLs, auth helpers, date helpers
+    assets.py      # Composes + digests the dashboard CSS/JS served from /assets
+  admin/
+    client_hours_routes.py     # Harvest time tracking
+    dashboards_routes.py       # Dashboard lifecycle + snapshots
+    reporting_routes.py        # Benchmarks, agency trends, budget HQ
+    shared.py                  # Values two admin modules both need
+  platforms/       # The public, API-key'd surface the Custom GPT calls
+    google_ads_routes.py / linkedin_routes.py / meta_routes.py
+    indeed_routes.py / ga4_routes.py / warehouse_routes.py
   dashboard_service.py           # Compatibility façade re-exporting dashboard/*
   dashboard_settings.py          # Settings page HTML (not yet migrated into dashboard/)
   dashboard_features.py / dashboard_theme.py
   
   # ChatGPT integration
-  openapi_gpt.py / openapi-chatgpt*.json / gpt-instructions-penn.md
+  openapi_gpt.py / gpt-instructions-penn.md
   
-  # Admin
+  # Misc
   admin_dev_notes.py / client_insight_documents.py / not_found_page.py
+
+  # Static assets served to the browser
+  static/css/dashboard-*.css     # The dashboard stylesheet, in cascade order
+  static/js/dashboard-*.js       # The dashboard script, in load order
 ```
 
 ### API Surface
@@ -271,7 +290,9 @@ A refresh cooldown (minimum 60 seconds between refreshes) is enforced via the `d
 
 ### API Response Cache
 
-All platform API calls check `db_cache.get_cached()` before hitting the live API. Cache key = `SHA256(source + canonical_JSON(payload))`. Default TTL = 3600 seconds, configurable via `CACHE_TTL_SECONDS`. Cache is stored in the `api_cache` Postgres table, not in Redis (despite `redis` being in requirements).
+All platform API calls check `db_cache.get_cached()` before hitting the live API. Cache key = `SHA256(source + canonical_JSON(payload))`. Default TTL = 3600 seconds, configurable via `CACHE_TTL_SECONDS`. Cache is stored in the `api_cache` Postgres table. The write-through goes
+through `db_cache.put_cached_best_effort`, which logs a failure rather than
+letting a cache problem turn a good response into a 500.
 
 ---
 
@@ -481,119 +502,116 @@ uvicorn main:app --reload
 
 ## Technical Debt
 
-### 1. No Database Connection Pooling
+_This section was rewritten on 7 September 2026 against the checkout at that
+date. The version before it was three months old and had become actively
+misleading: it named twelve debts, nine of which were fixed or had never been
+accurate, so anyone working from it would have gone looking for problems that
+no longer existed. If you are reading this and the facts below do not match the
+tree, trust the tree and correct this — a half-true review costs more than no
+review._
 
-Every request calls `psycopg.connect(DATABASE_URL)` directly — a new TCP connection per query. Under any concurrent load this will exhaust PostgreSQL's `max_connections`. SQLAlchemy connection pooling or PgBouncer is not present. This is the single highest-priority scaling risk.
+### Open
 
-### 2. Synchronous DB Driver in an Async Server
+**1. `main.py` still holds the login and OAuth flows.** At 1,865 lines it is no
+longer the monolith it was (3,701 in September, 1,986 when first flagged in
+June): the `/admin` pages moved to `admin/`, the platform API to `platforms/`,
+and the dashboard was already in `dashboard/`. What remains is app construction
+— which belongs there — plus the login/OAuth routes and about 590 lines of
+`/admin` pages that share page-rendering helpers with each other. Moving those
+means moving the helpers first, which is a refactor rather than a relocation.
 
-FastAPI runs on an ASGI event loop. All psycopg calls use the synchronous API (`psycopg.connect`, not `psycopg.AsyncConnection`). Every database query blocks the event loop, eliminating the concurrency benefit of ASGI. Migration to `psycopg.AsyncConnection` or asyncpg is needed.
+**2. `dashboard_settings.py` has not moved into the `dashboard/` package.** It
+still references renderer internals through compatibility aliases.
 
-### 3. No Migrations Framework
+**3. Files are stored as Postgres `BYTEA`.** `client_insight_documents` keeps
+raw file content in the database, which bloats it and gives vacuum more work
+than it needs. An object store is the right home. File retrieval also reads
+whole documents into memory rather than streaming.
 
-Schema is managed via `CREATE TABLE IF NOT EXISTS` statements inline in each module. There is no version tracking, no rollback capability, and no way to apply incremental schema changes safely. Alembic is the natural fit given the existing Python ecosystem.
+**4. Auth-path test coverage is thin.** `oauth_flows.py` is at 36% and
+`web_users.py` at 37% — the least-covered code in the repo handles tokens and
+sessions. The security-critical primitives in `oauth_flows` (the post-login
+redirect check, the connect-link token, the OAuth state) are now covered; the
+provider-specific code exchanges are not. Writing the first batch found a live
+open redirect, which is the argument for continuing.
 
-### 4. `main.py` Monolith
+**5. Content-Security-Policy cannot set `script-src` or `style-src`.** 83
+inline `style` attributes reach the DOM — 47 written into the served markup and
+36 more inside HTML the cached script builds and assigns via `innerHTML` — and
+each dashboard page emits a small inline `<script>` carrying its per-request
+configuration. All of those are blocked by the respective directive without
+`'unsafe-inline'`, so the strongest XSS control available stays switched off
+until they are gone or a per-request nonce is threaded through.
 
-At ~1,986 lines, `main.py` contains Google Ads routes, LinkedIn routes, Meta routes, GA4 routes, Indeed routes, warehouse routes, admin routes, user routes, OAuth routes, and the cache health endpoint. The dashboard sub-package demonstrates the desired modular pattern but the bulk of `main.py` has not been refactored.
+(The 22 `element.style.<prop> = …` assignments in the script are *not* a
+problem: CSP does not restrict the CSSOM, only styles parsed from markup. Worth
+knowing before anyone tries to convert them.)
 
-### 5. Massive `models.py`
+**6. Most environment variables are undocumented.** The app reads about 110;
+`.env.example` describes 29 of them, and the omissions include `DATABASE_URL`,
+`DB_POOL_ENABLED`, the cache TTLs and every `BQ_*` routing value. Standing the
+app up from the repository alone is not currently possible.
 
-`models.py` contains 650+ Pydantic schema classes for all platforms in a single file. It should be split into per-platform model modules.
+**7. Connection pooling is built but opt-in.** `db.py` funnels every read and
+write through one pooled helper and 239 call sites use it, but
+`DB_POOL_ENABLED` defaults off. Unless it is set in Railway, each of those call
+sites still opens a TCP connection per query.
 
-### 6. Redis Declared but Unused
+**8. Style-only lint rules are deferred.** `pyproject.toml` records which and
+why: import sorting (~97 files) and flake8-simplify (~107 sites) would each be a
+large mechanical diff, and three smaller rules still have findings.
 
-`redis==5.0.1` appears in `requirements.txt` but no active Redis usage exists in the codebase. The declared intent was likely to replace the PostgreSQL `api_cache` table with Redis. Until implemented, it is dead weight in the dependency manifest.
+### Closed since the June review
 
-### 7. Files Stored as PostgreSQL BYTEA
-
-`client_insight_documents` stores raw file content as `BYTEA` in Postgres. This bloats the database, degrades vacuum performance, and is not designed for binary large objects. Files should be moved to an object store (S3, Google Cloud Storage, Railway Volumes).
-
-### 8. Penn Coupling Throughout Codebase
-
-A significant portion of the system is hardcoded for Penn Community Bank: `penn_config.py`, `penn_business_lines.py`, `PENN_*` env vars, the cron worker name `cron-sync-penn`, and `refresh_penn()` as the primary sync function. The multi-tenant architecture (`DASHBOARD_CLIENTS`, `GA4_CLIENTS`) exists but is layered on top of Penn-specific logic rather than the other way around.
-
-### 9. Single Test File
-
-Only `tests/test_ga4_clients.py` exists. While the eight tests there are well-written, the rest of the application has zero automated test coverage: no tests for the auth flow, no tests for warehouse sync, no tests for any platform service.
-
-### 10. `dashboard_settings.py` Not Yet Migrated
-
-Per `dashboard/ARCHITECTURE.md`, `dashboard_settings.py` (the settings page HTML and OAuth status rendering) has not been moved into the `dashboard/` sub-package. It references internal renderer symbols via compatibility aliases.
-
-### 11. Checked-In Generated Artifacts
-
-`openapi-chatgpt.json`, `openapi-chatgpt-penn.json`, and `openapi-chatgpt-min.json` are generated artifacts checked into the repository. These will drift from the live schema if `openapi_gpt.py` is changed without regenerating them.
-
-### 12. Platform-Specific `normalize_source` Has a Default Fallback
-
-`warehouse.py:_normalize_source()` returns `"linkedin"` as a default for any unrecognized source string. A typo in a source name (e.g., `"google_ads"` instead of `"google"`) silently writes data to the wrong source bucket.
+| Debt as recorded in June | What is true now |
+|---|---|
+| No connection pooling | `db.py` pools; 239 call sites migrated (flag still off — see 7 above) |
+| No migrations framework | `db_migrate.py`, plus a CI guard keeping DDL off read/write paths |
+| Redis declared but unused | Gone from `requirements.txt` |
+| Only one test file | 130 files, ~1,600 tests, ~25s in CI |
+| `models.py` has 650+ classes | 573 lines, 62 classes |
+| Penn hardcoded throughout | One `penn_*.py` module, three `PENN_*` variables |
+| Checked-in OpenAPI artifacts | None in the tree |
+| `main.py` monolith | 3,701 → 1,865 lines (see 1 above) |
+| No observability on failures | Logging is configured; 103 silently-swallowed exceptions now log or explain why not |
 
 ---
 
 ## Areas of Risk
 
-### 1. Open API Endpoints When `API_KEY` Is Unset
+### Open
 
-If `API_KEY` is not set in the environment, `security.py:require_api_key()` returns immediately without checking any credential. All `/google-ads/*`, `/linkedin/*`, `/meta/*`, `/ga4/*`, `/indeed/*`, and `/warehouse/*` endpoints become publicly accessible. A misconfigured deploy would expose live marketing data and allow arbitrary GAQL queries and BigQuery SQL execution.
+**1. Rotating `OAUTH_TOKEN_ENCRYPTION_KEY` invalidates stored tokens.** Tokens
+are encrypted at rest with a key derived from that variable and there is no
+key-versioning or re-encryption path, so rotating it silently breaks every
+stored connector until each is reconnected by hand.
 
-**Mitigation needed**: Fail-closed by default — raise an error on startup if `API_KEY` is not set in production, or always require auth with no fallback.
+**2. Rate limiting depends on the database.** `login_rate_limit` keeps its
+buckets in Postgres. If the database is unreachable the limiter fails open, so
+the login endpoint loses its throttle exactly when the system is least healthy.
 
-### 2. Shared Secret Fallback Chain — *resolved*
+**3. No alerting on sync failure.** A platform sync that fails now leaves a log
+line, which is new — but nothing watches for it, so a connector can stop
+producing data and the first report of it will come from whoever notices the
+dashboard is stale.
 
-Previously `AUTH_SESSION_SECRET` fell back to `CRON_SECRET`, then to `API_KEY`, so one secret's compromise or rotation cascaded across sessions, cron auth, and the API key.
+**4. External API calls have no general retry or breaker.** GTM is the exception
+and shows the pattern worth copying (`gtm_quota`: a shared token bucket and a
+breaker that trips on a real rejection). The other platforms retry ad hoc or not
+at all.
 
-**Resolved**: each auth surface now uses a dedicated secret and, in production, fails closed with no cross-fallback (local dev keeps convenience fallbacks). The canonical resolver is `security.session_signing_secret()`:
-- **Session cookies** (`web_auth.session_secret`) and **OAuth connect-link / state tokens** (`oauth_flows._connect_secret`) use `AUTH_SESSION_SECRET`.
-- **OAuth token encryption** (`oauth_store._encryption_key`) uses `OAUTH_TOKEN_ENCRYPTION_KEY`.
-- **`CRON_SECRET`** is now dedicated to the `/internal/sync-*` endpoints only.
+**5. Penn-specific sync entrypoint.** `refresh_penn()` is still the shape the
+cron worker drives, so adding cron-driven sync for another client needs code
+rather than configuration.
 
-The legacy `?key=` dashboard share link (and its `DASHBOARD_SECRET`) has since been **retired entirely** — dashboards are session-only, so there is no longer a dashboard access secret at all (see "Legacy `?key=` share link retired" below).
+### Closed since the June review
 
-A missing session secret no longer silently disables login — `main.py` logs a clear warning. **Migration**: set `AUTH_SESSION_SECRET` and `OAUTH_TOKEN_ENCRYPTION_KEY` in Railway; to avoid disrupting active sessions during the cutover, set them to the value `CRON_SECRET` currently holds, then rotate independently later.
-
-### 3. OAuth Token Encryption Key Rotation = Token Loss
-
-The Fernet encryption key for stored OAuth tokens is derived from `AUTH_SESSION_SECRET`. If that secret is rotated (e.g., after a compromise), all stored OAuth tokens in `oauth_credentials` become unreadable and must be re-authorized through the OAuth flow for each platform. There is no key migration / re-encryption capability.
-
-### 4. No CSRF Protection — *resolved*
-
-The login form (`POST /login`), settings forms, and admin forms use standard HTML `<form>` submissions with session cookies. Previously no CSRF token was issued or verified; `SameSite=Lax` blocked cross-site top-level POSTs but not every non-top-level cross-origin case.
-
-**Resolved** in `web_security.py`: a per-session synchronizer token is seeded into the signed session cookie and enforced by the `_csrf_protect` middleware for cookie-authenticated, state-changing requests. Header-authenticated API callers (Bearer / `X-API-Key`) and the cron secret are exempt. The token reaches the browser two ways — a hidden `csrf_token` field auto-injected into every server-rendered `<form method=post>`, and a `<meta name="csrf-token">` plus a small `fetch` wrapper that attaches the `X-CSRF-Token` header to same-origin AJAX writes. The same module applies a framework-safe set of response security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, a framing/base-uri/form-action CSP, `Permissions-Policy`, and HSTS on HTTPS).
-
-### 5. Synchronous Database Access Blocks the Event Loop
-
-All `psycopg.connect()` calls block the asyncio event loop. Under concurrent dashboard loads or simultaneous API calls, requests will queue behind each other even on a multi-core host. One slow query can stall all in-flight requests.
-
-### 6. No Retry / Circuit Breaker on External API Calls
-
-Platform API calls (Google Ads, LinkedIn, Meta, BigQuery) use `httpx` without retry logic or circuit breakers. A transient rate-limit error (HTTP 429) or a 5xx from a platform API will surface directly as an error to the dashboard user with no automatic retry. At scale, this increases user-facing error rates during platform API instability.
-
-### 7. Rate Limiting Depends on Database Availability
-
-`login_rate_limit.check_login_allowed()` silently returns `allowed=True` if the database is unreachable (line: `except Exception: return RateLimitStatus(allowed=True)`). A database outage disables brute-force protection for the login page.
-
-### 8. No Observability / Alerting on Sync Failures
-
-The cron worker (`run_sync_penn.py`) makes an HTTP call to the main service. If the call fails (network error, auth error, server error), the failure is logged to Railway's stdout but there is no alerting mechanism — no email, no Slack notification, no Railway alert hook. A broken sync can go undetected until a user notices stale data on the dashboard.
-
-### 9. BigQuery SQL Injection Surface
-
-`POST /ga4/query` accepts arbitrary BigQuery SQL in the request body and executes it against the client's BQ dataset. This endpoint is protected by `API_KEY`, but any caller with the API key can run arbitrary SQL against the GA4 BigQuery project, including reads across all tables in the dataset.
-
-### 10. File Retrieval Without Streaming
-
-Client insight documents stored as BYTEA are loaded entirely into memory before being returned as a response. A large file (e.g., a 50 MB PDF) would occupy that memory for the full response duration. Under concurrent file downloads, this could cause memory exhaustion.
-
-### 11. Penn-Specific Logic as the Sync Entrypoint
-
-`POST /internal/sync-penn` is the only cron-triggered sync endpoint. Adding a second agency client requires either:
-(a) Adding another platform-specific cron endpoint and a second cron worker service, or
-(b) Refactoring into a generic client-agnostic sync endpoint
-
-The current architecture does not support multi-client cron-driven sync without code changes.
-
-### 12. No Health Check for Sync or Platform Connectivity
-
-`GET /health` returns a static `200 OK` — it does not verify database connectivity, OAuth token validity, or platform API reachability. A deploy that is "healthy" by Railway's check may still be unable to serve any real data. A meaningful health check should verify `DATABASE_URL` connectivity and optionally report platform credential status.
+| Risk as recorded in June | What is true now |
+|---|---|
+| Endpoints open when `API_KEY` is unset | Startup refuses to boot in production without it |
+| Shared secret fallback chain | Resolved before the June review was written |
+| No CSRF protection | Resolved before the June review was written |
+| Synchronous DB blocking the event loop | 19 handlers, including the whole auth dependency chain, now run in a threadpool |
+| BigQuery SQL injection surface | 174 typed query parameters; interpolated values are dates or allowlisted keys. `_resolve_stage()` documents why its interpolation is safe. No injectable path found |
+| `/health` is static | `/health/ready` verifies database connectivity |
+| Open redirect after login | Fixed: `validate_return_to` now refuses backslash and control-character bypasses as well as `//` |

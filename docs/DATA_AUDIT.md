@@ -199,8 +199,10 @@ Four auth tiers:
 
 ### 4.1 Public / ChatGPT API (Bearer)
 
-Described by `openapi-chatgpt*.json` + `openapi_gpt.py`; consumed by a ChatGPT
-Custom Action. Read + warehouse-sync endpoints per platform:
+Defined in `platforms/*_routes.py` and described by the OpenAPI document the
+app generates (`openapi_gpt.py` shapes it); consumed by a ChatGPT Custom
+Action. The checked-in `openapi-chatgpt*.json` snapshots are gone — the live
+spec is the source of truth. Read + warehouse-sync endpoints per platform:
 
 - `/health`, `/warehouse/status`, `/warehouse/metrics`
 - Google Ads: `/google-ads/{accounts,search,search-many,summary-all,youtube-videos,warehouse/sync}`
@@ -415,6 +417,6 @@ Use these as verification steps, in rough priority order:
 | Budget pacing & totals | `dashboard/services/snapshot_metrics_service.py`, `warehouse_metrics_service.py` |
 | Business-line classification | `penn_business_lines.py`, `business_line_rules.py` |
 | Freshness / data-source status | `data_source_status.py`, `dashboard/services/bigquery_refresh_orchestrator.py` |
-| Endpoints | `main.py`, `dashboard/routes/*.py`, `openapi-chatgpt*.json`, `openapi_gpt.py` |
+| Endpoints | `platforms/*_routes.py` (public API), `dashboard/routes/*.py`, `admin/*_routes.py`, `main.py` (login + OAuth), `openapi_gpt.py` |
 | Auth | `security.py`, `cron_security.py`, `web_auth.py` |
 | Cron workers | `railway/cron-sync-penn`, `railway/cron-sync-bq`, `railway/cron-sync-hubspot` |
