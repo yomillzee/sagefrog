@@ -68,6 +68,9 @@ async def require_api_key(
     x_api_key: str | None = Security(_api_key_header),
 ) -> None:
     """Require Bearer token or X-API-Key. Fails closed in production; open in local dev when API_KEY is unset."""
+    # Stays async deliberately: this does no I/O (an env read and a constant-time
+    # compare), so running it on the event loop is cheaper than the threadpool
+    # hop a sync dependency would cost.
     expected = configured_api_key()
     if not expected:
         if is_production():
