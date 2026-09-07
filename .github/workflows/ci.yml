@@ -36,6 +36,10 @@ jobs:
     env:
       # Ephemeral, synthetic DB — the migration + DB-gated tests run against this.
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/sagefrog_test
+      # Match production. Pooling shipped behind this flag and sat off for
+      # months, so the branch that now serves every request was the one branch
+      # CI never executed. Test the configuration that is actually deployed.
+      DB_POOL_ENABLED: "1"
     defaults:
       run:
         working-directory: railway/app

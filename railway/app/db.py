@@ -4,12 +4,18 @@ The app otherwise opens a brand-new TCP connection for every query (117+ raw
 `psycopg.connect()` calls), which exhausts Postgres `max_connections` under any
 real concurrency. This module funnels DB access through a single pooled helper.
 
-Rollout safety: pooling is **opt-in** via `DB_POOL_ENABLED=1`. When the flag is
-off (the default), `connection()` behaves byte-for-byte like the legacy
-`with psycopg.connect(DATABASE_URL) as conn:` pattern, so this can be deployed
-with zero behavior change and enabled later in staging. If the flag is on but
-`psycopg_pool` is unavailable or the pool fails to open, it falls back to a
-direct connection rather than erroring.
+Rollout safety: pooling is opt-in via `DB_POOL_ENABLED=1`. When the flag is
+off (still the code default), `connection()` behaves byte-for-byte like the
+legacy `with psycopg.connect(DATABASE_URL) as conn:` pattern, so this could be
+deployed with zero behaviour change. If the flag is on but `psycopg_pool` is
+unavailable or the pool fails to open, it falls back to a direct connection and
+logs rather than erroring — a pooling problem must not become an outage.
+
+**The flag is set in Railway, so pooling is what production runs.** CI sets it
+too (see .github/workflows/ci.yml): it sat off for months, which meant the
+branch now serving every request was the one branch no test executed. Both
+paths are covered by tests/test_db_pool.py — including the fallbacks, which are
+the reason turning it on was safe.
 
 Tunables: DB_POOL_MIN_SIZE (default 1), DB_POOL_MAX_SIZE (default 10),
 DB_POOL_TIMEOUT seconds to wait for a free connection (default 10).
