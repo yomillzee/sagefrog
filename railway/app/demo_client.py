@@ -67,9 +67,10 @@ def seed_demo_client() -> bool:
     """Idempotently register the demo dashboard + config (and optional login).
 
     Safe to call on every boot: it creates the dashboard registry row and its
-    ``bigquery_nixon`` config only when missing, and re-applies the label,
-    monthly budget, and (no) segmentation each time so the demo's presentation
-    stays consistent. Returns True when the demo is present/seeded, False when
+    ``bigquery_nixon`` config only when missing, and re-applies the label and
+    monthly budget each time so the demo's presentation stays consistent. It
+    deliberately leaves segment_filter_profile alone — NULL already means "no
+    segment filters". Returns True when the demo is present/seeded, False when
     disabled or the database isn't available. Never raises — a demo-seed
     failure must not take down app startup.
     """
@@ -118,9 +119,18 @@ def seed_demo_client() -> bool:
         cdc.save_monthly_budget(
             DEMO_SLUG, monthly_budget_usd=DEMO_MONTHLY_BUDGET_USD, updated_by="demo-seed",
         )
-        # No business-line / region segmentation for the demo (keeps the filter
-        # UI simple, like most new clients).
-        cdc.backfill_segment_filter_profile(DEMO_SLUG, "")
+        # No business-line / region segmentation for the demo — the filter UI
+        # stays simple, like most new clients. Nothing to do for that: a config
+        # row starts with segment_filter_profile NULL, which *is* "no segment
+        # filters" (the Settings dropdown shows it as "None").
+        #
+        # This used to call backfill_segment_filter_profile(DEMO_SLUG, "") and
+        # raise on every boot: that helper seeds a *known* profile onto clients
+        # that predate the column, so it requires one of business_lines/regions
+        # and cannot express "none". save_segment_filter_profile(slug, None)
+        # would express it, but it overwrites unconditionally — so it would
+        # reset the demo client every restart if an admin ever chose a profile
+        # for it. Leaving the column alone is both correct and idempotent.
     except Exception:
         logger.warning("demo client: config save failed", exc_info=True)
 
