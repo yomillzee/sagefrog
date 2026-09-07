@@ -213,8 +213,33 @@ def pop_oauth_state(request, *, platform: str) -> tuple[str | None, str, str]:
 
 
 def validate_return_to(path: str) -> str:
+    r"""Confine a redirect target to this origin, or fall back to /admin.
+
+    This guards an open redirect that is reachable without logging in:
+    ``/login?next=…`` carries the value straight through to the redirect issued
+    after a successful sign-in. Somebody sent a crafted link sees the real
+    portal on the real domain, signs in, and lands wherever the link says.
+
+    Rejecting anything that does not start with a single "/" is not enough.
+    Browsers resolve URLs by the WHATWG rules, where a backslash is treated as
+    a slash in this position, so ``/\evil.com`` reaches ``https://evil.com/``
+    exactly as ``//evil.com`` does — it just does not look like it. Backslashes
+    have no place in a path here, so they are refused outright rather than
+    special-cased.
+
+    Also refused: control characters, which browsers strip out of a URL before
+    resolving it, so ``/\x00/evil.com``-style values can smuggle a second
+    leading slash past a naive check.
+    """
     text = (path or "/admin").strip()
-    if not text.startswith("/") or text.startswith("//"):
+    if not text.startswith("/"):
+        return "/admin"
+    # A second leading slash (or backslash) makes the rest an authority, not a path.
+    if len(text) > 1 and text[1] in "/\\":
+        return "/admin"
+    if "\\" in text:
+        return "/admin"
+    if any(ch < " " or ch == "\x7f" for ch in text):
         return "/admin"
     return text
 
