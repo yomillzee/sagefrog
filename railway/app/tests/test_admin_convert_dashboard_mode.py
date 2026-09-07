@@ -10,7 +10,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-import main  # noqa: E402
+from admin import dashboards_routes  # noqa: E402
 
 
 class AdminConvertDashboardModeTests(unittest.TestCase):
@@ -24,9 +24,9 @@ class AdminConvertDashboardModeTests(unittest.TestCase):
 
         with patch.object(cdc, "get_config", return_value=existing), \
              patch.object(cdc, "save_config", side_effect=lambda slug, **kw: saved.update({"slug": slug, **kw})), \
-             patch.object(main.audit_log, "request_context", return_value={}), \
-             patch.object(main.audit_log, "record"):
-            resp = main.admin_convert_dashboard_mode(
+             patch.object(dashboards_routes.audit_log, "request_context", return_value={}), \
+             patch.object(dashboards_routes.audit_log, "record"):
+            resp = dashboards_routes.admin_convert_dashboard_mode(
                 client_slug="OldCo", request=types.SimpleNamespace(),
                 user=types.SimpleNamespace(email="admin@x.com", role="admin"),
             )
@@ -44,8 +44,8 @@ class AdminConvertDashboardModeTests(unittest.TestCase):
         import client_dashboard_config as cdc
 
         with patch.object(cdc, "get_config", side_effect=RuntimeError("db down")), \
-             patch.object(main.audit_log, "request_context", return_value={}):
-            resp = main.admin_convert_dashboard_mode(
+             patch.object(dashboards_routes.audit_log, "request_context", return_value={}):
+            resp = dashboards_routes.admin_convert_dashboard_mode(
                 client_slug="oldco", request=types.SimpleNamespace(),
                 user=types.SimpleNamespace(email="admin@x.com", role="admin"),
             )

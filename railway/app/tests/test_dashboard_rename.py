@@ -20,7 +20,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 import dashboard_registry  # noqa: E402
-import main  # noqa: E402
+from admin import dashboards_routes  # noqa: E402
 
 
 class RenameClientRegistryTests(unittest.TestCase):
@@ -86,10 +86,10 @@ class AdminRenameRouteTests(unittest.TestCase):
         renamed = dashboard_registry.DashboardClientRow(
             client_slug="nixon-bq-test", label="Nixon Medical", source="builtin"
         )
-        with patch.object(main.dashboard_registry, "rename_client", return_value=renamed) as rc, \
-             patch.object(main.audit_log, "request_context", return_value={}), \
-             patch.object(main.audit_log, "record"):
-            resp = main.admin_rename_dashboard(
+        with patch.object(dashboards_routes.dashboard_registry, "rename_client", return_value=renamed) as rc, \
+             patch.object(dashboards_routes.audit_log, "request_context", return_value={}), \
+             patch.object(dashboards_routes.audit_log, "record"):
+            resp = dashboards_routes.admin_rename_dashboard(
                 client_slug="nixon-bq-test", request=types.SimpleNamespace(),
                 label="Nixon Medical",
                 user=types.SimpleNamespace(email="admin@x.com", role="admin"),
@@ -103,13 +103,13 @@ class AdminRenameRouteTests(unittest.TestCase):
         )
 
     def test_route_validation_error_returns_400(self) -> None:
-        with patch.object(main.dashboard_registry, "rename_client",
+        with patch.object(dashboards_routes.dashboard_registry, "rename_client",
                           side_effect=ValueError("Dashboard name is required.")), \
-             patch.object(main.audit_log, "request_context", return_value={}), \
-             patch.object(main.web_users, "list_users", return_value=[]), \
-             patch.object(main.audit_log, "list_recent", return_value=[]), \
-             patch.object(main.web_auth, "render_admin_page", return_value="<html></html>"):
-            resp = main.admin_rename_dashboard(
+             patch.object(dashboards_routes.audit_log, "request_context", return_value={}), \
+             patch.object(dashboards_routes.web_users, "list_users", return_value=[]), \
+             patch.object(dashboards_routes.audit_log, "list_recent", return_value=[]), \
+             patch.object(dashboards_routes.web_auth, "render_admin_page", return_value="<html></html>"):
+            resp = dashboards_routes.admin_rename_dashboard(
                 client_slug="nixon-bq-test", request=types.SimpleNamespace(),
                 label="", user=types.SimpleNamespace(email="admin@x.com", role="admin"),
             )
