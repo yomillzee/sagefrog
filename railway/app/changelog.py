@@ -76,9 +76,9 @@ ENTRIES: tuple[Entry, ...] = (
             "Most sources run on the nightly sync. PageSpeed runs about weekly "
             "and SEMrush about monthly, because their audits are slow and "
             "metered.",
-            "LinkedIn Organic and Google Tag Manager are not on the nightly run "
-            "at all — they update only when someone clicks Run sync now, and the "
-            "badge now says so.",
+            "LinkedIn Organic, Google Business Profile and Google Tag Manager "
+            "are not on the nightly run at all — they update only when someone "
+            "clicks Run sync now, and the badge now says so.",
             "A connector whose auto-sync is switched off for a client reads "
             "“Auto-sync off” instead of a cadence.",
             "The connector's own page shows the same cadence in its Sync "
