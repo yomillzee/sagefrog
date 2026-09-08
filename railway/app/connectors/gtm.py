@@ -19,6 +19,10 @@ class GTMConnector(ConnectorHandler):
     display_name = "Google Tag Manager"
     oauth_platform = "google_tag_manager"
     default_raw_dataset = "raw_gtm"
+    # Tag-container config, not a BQ data source — and the GTM API's project-wide
+    # 0.25 req/s quota rules out a nightly per-client crawl, so the daily refresh
+    # leaves this out. Audits run on demand from the connector page.
+    cron_synced = False
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         refresh_token = oauth_store.get_refresh_token(

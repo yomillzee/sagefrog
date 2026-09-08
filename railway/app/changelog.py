@@ -63,6 +63,30 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-08",
+        title="Every connector says how often it syncs",
+        area="Connectors",
+        kind="new",
+        summary=(
+            "Each connector card now carries a small cadence badge — Daily, "
+            "Weekly, Monthly or Manual only — with a tooltip explaining what "
+            "the automated sync actually does, so you no longer have to guess "
+            "why one source is fresher than another."
+        ),
+        details=(
+            "Most sources run on the nightly sync. PageSpeed runs about weekly "
+            "and SEMrush about monthly, because their audits are slow and "
+            "metered.",
+            "LinkedIn Organic, Google Business Profile and Google Tag Manager "
+            "are not on the nightly run at all — they update only when someone "
+            "clicks Run sync now, and the badge now says so.",
+            "A connector whose auto-sync is switched off for a client reads "
+            "“Auto-sync off” instead of a cadence.",
+            "The connector's own page shows the same cadence in its Sync "
+            "section, replacing a Frequency row that said Daily for everything.",
+        ),
+    ),
+    Entry(
+        date="2026-09-08",
         title="Email Performance compares each email with the ones you picked",
         area="Email Performance",
         kind="improved",

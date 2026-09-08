@@ -31,6 +31,11 @@ class GoogleBusinessConnector(ConnectorHandler):
     display_name = "Google Business Profile"
     oauth_platform = "google_business"
     default_raw_dataset = "raw_google_business"
+    # Not in the daily refresh's connector list (bigquery_refresh_orchestrator
+    # ._SYNC_CONNECTORS), so nothing syncs this on a schedule today — profile
+    # data lands only on an explicit "Run sync now". Flagged here so the
+    # Connectors page says so out loud instead of implying a nightly cadence.
+    cron_synced = False
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         refresh_token = oauth_store.get_refresh_token(
