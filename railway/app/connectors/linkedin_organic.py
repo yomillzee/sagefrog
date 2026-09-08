@@ -30,11 +30,6 @@ class LinkedInOrganicConnector(ConnectorHandler):
     display_name = "LinkedIn Organic"
     oauth_platform = "linkedin_organic"
     default_raw_dataset = "raw_linkedin_organic"
-    # Not in the daily refresh's connector list (bigquery_refresh_orchestrator
-    # ._SYNC_CONNECTORS), so nothing syncs this on a schedule today — organic
-    # data lands only on an explicit "Run sync now". Flagged here so the
-    # Connectors page says so out loud instead of implying a nightly cadence.
-    cron_synced = False
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         access_token = _get_access_token(client_slug)

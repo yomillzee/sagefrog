@@ -63,6 +63,24 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-08",
+        title="LinkedIn Organic refreshes every night",
+        area="Connectors · LinkedIn Organic",
+        kind="fixed",
+        summary=(
+            "LinkedIn Organic was never part of the nightly sync — followers, "
+            "posts and page stats only moved when someone clicked Run sync now. "
+            "It now refreshes on its own every night like the other daily "
+            "sources."
+        ),
+        details=(
+            "If a client's LinkedIn Organic numbers looked stale, this is why; "
+            "the first nightly run brings them current.",
+            "Its card on the Connectors page now reads Daily instead of "
+            "Manual only.",
+        ),
+    ),
+    Entry(
+        date="2026-09-08",
         title="Every connector says how often it syncs",
         area="Connectors",
         kind="new",

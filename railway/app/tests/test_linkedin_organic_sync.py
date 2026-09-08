@@ -113,5 +113,14 @@ class RunOrganicSyncTests(unittest.TestCase):
         self.assertEqual(result["error"], "missing_org_id")
 
 
+class AutomatedSyncTests(unittest.TestCase):
+    def test_included_in_the_daily_refresh(self) -> None:
+        # Without this the cron never syncs LinkedIn Organic — followers and
+        # post engagement would only move on a manual "Run sync now" click.
+        import dashboard.services.bigquery_refresh_orchestrator as orch
+
+        self.assertIn("linkedin_organic", orch._SYNC_CONNECTORS)
+
+
 if __name__ == "__main__":
     unittest.main()
