@@ -62,6 +62,26 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-08",
+        title="Email Performance compares each email with the ones you picked",
+        area="Email Performance",
+        kind="improved",
+        summary=(
+            "The small +/- figure under an open or click rate now measures the "
+            "email against the average of the emails currently selected, not "
+            "against every send in the client's history. Narrow to one campaign "
+            "or one quarter and the comparison is like with like."
+        ),
+        details=(
+            "The figure moves as you change the selection or the send-date "
+            "range, so it always describes the set on screen.",
+            "The tiles at the top are that average, so they now name the set "
+            "they cover instead of carrying a comparison of their own.",
+            "With a single email selected there is nothing to compare against, "
+            "so the +/- figures drop out rather than reading zero.",
+        ),
+    ),
+    Entry(
         date="2026-09-06",
         title="Pages are compressed on the way to the browser",
         area="Client Dashboards",

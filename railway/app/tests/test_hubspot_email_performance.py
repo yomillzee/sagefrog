@@ -204,6 +204,22 @@ class RenderPageTests(unittest.TestCase):
                        'id="ep-backdrop"'):
             self.assertIn(needle, html, needle)
 
+    def test_deltas_are_measured_against_the_selection_not_the_whole_list(self):
+        """The per-row and tile comparison is the selected emails' own average,
+        so it moves with the selection instead of dragging in every send this
+        client ever made."""
+        html = self._render(self._emails(9))
+        self.assertIn("distance from the average across the emails you have "
+                      "selected", html)
+        # The baseline is recomputed per render, over `selected`, and drops out
+        # when there is only one email to compare with.
+        self.assertIn("function computeBaseline()", html)
+        self.assertIn("baseline[k] = baselineCount > 1 ? aggRate(selected, k) : null;", html)
+        self.assertIn("average across the ' + baselineCount + ' selected emails", html)
+        # Nothing on the page still claims to compare against the full list.
+        for gone in ("vs all emails", "in line with all", "aggRate(allIds"):
+            self.assertNotIn(gone, html, gone)
+
     def test_save_control_is_admin_only(self):
         self.assertNotIn('id="ep-save"', self._render(self._emails()))
         self.assertIn('id="ep-save"', self._render(self._emails(), session_is_admin=True))
