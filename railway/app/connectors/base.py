@@ -45,6 +45,43 @@ class ConnectorHandler(ABC):
     # sources whose data barely moves day to day — e.g. PageSpeed (live Lighthouse
     # audits) runs ~monthly. First run and manual/onboarding syncs ignore this.
     min_sync_interval_days: int = 0
+    # False for connectors the nightly cron doesn't drive at all — their data
+    # only moves when someone clicks "Run sync now". Kept in step with the
+    # orchestrator's _SYNC_CONNECTORS by tests/test_sync_cadence.py, and read by
+    # the Connectors page to label each card with how often it actually runs.
+    cron_synced: bool = True
+
+    def sync_cadence(self) -> tuple[str, str]:
+        """(short label, tooltip) for how often the automated sync runs this.
+
+        Derived from cron_synced + min_sync_interval_days so the Connectors page
+        can never claim a cadence the orchestrator doesn't honour.
+        """
+        if not self.cron_synced:
+            return (
+                "Manual only",
+                f"{self.display_name} is not part of the nightly sync. Its data "
+                'updates only when someone clicks "Run sync now" on this connector.',
+            )
+        days = int(self.min_sync_interval_days or 0)
+        if days <= 1:
+            return (
+                "Daily",
+                "Runs on the nightly sync, every day. "
+                '"Run sync now" fetches fresh data any time.',
+            )
+        if days == 7:
+            label = "Weekly"
+        elif days in (28, 29, 30, 31):
+            label = "Monthly"
+        else:
+            label = f"Every {days} days"
+        return (
+            label,
+            f"The nightly sync skips this connector until {days} days have passed "
+            f"since its last successful run, so it lands about {label.lower()}. "
+            '"Run sync now" ignores that and runs immediately.',
+        )
 
     @abstractmethod
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:

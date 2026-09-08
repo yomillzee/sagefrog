@@ -166,6 +166,18 @@ _CONNECTOR_CSS = """
   .status-label { font-size: 0.85rem; color: var(--muted); }
   .status-ok .status-label { color: #16a34a; font-weight: 600; }
   .status-error .status-label { color: #dc2626; font-weight: 600; }
+  .connector-cadence {
+    display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
+    padding: 2px 8px; border-radius: 999px; background: var(--surface-2, #f1f5f9);
+    border: 1px solid var(--border); color: var(--muted);
+    font-size: 0.72rem; font-weight: 600; letter-spacing: .01em;
+    cursor: help;
+  }
+  .connector-cadence .cadence-dot {
+    width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .55;
+  }
+  .connector-cadence.cadence-manual { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+  .connector-cadence.cadence-paused { color: #64748b; }
   .connector-last-sync { font-size: 0.78rem; color: var(--muted); }
   .connector-sync-range { font-size: 0.72rem; color: var(--muted); opacity: 0.85; margin-top: 2px; }
   .connector-card-action { margin-top: auto; }
@@ -502,6 +514,23 @@ def render_connectors_directory(
         icon = _PLATFORM_ICONS.get(ctype, "")
         detail_url = f"/dashboard/{client_slug}/connectors/{ctype}"
 
+        # How often the automated sync actually runs this connector. The label
+        # is short enough for the card; the tooltip carries the why.
+        cadence_label, cadence_tip = handler.sync_cadence()
+        cadence_cls = "cadence-manual" if not handler.cron_synced else ""
+        if cfg and status != "not_connected" and not cfg.sync_enabled and handler.cron_synced:
+            cadence_tip = (
+                f"Normally {cadence_label.lower()}, but auto-sync is turned off for "
+                "this client, so the nightly run skips it. Turn it back on from "
+                'Manage, or use "Run sync now".'
+            )
+            cadence_label = "Auto-sync off"
+            cadence_cls = "cadence-paused"
+        cadence_html = (
+            f'<div class="connector-cadence {cadence_cls}" title="{_esc(cadence_tip)}">'
+            f'<span class="cadence-dot"></span>{_esc(cadence_label)}</div>'
+        )
+
         last_sync_html = ""
         if cfg and cfg.last_success_at:
             ts = cfg.last_success_at
@@ -533,6 +562,7 @@ def render_connectors_directory(
               <span class="status-dot"></span>
               <span class="status-label">{_esc(status_label)}</span>
             </div>
+            {cadence_html}
             {last_sync_html}
             <div class="connector-card-action">{action_btn}</div>
           </div>
@@ -1170,6 +1200,11 @@ def _render_management_view(
     if config.last_success_at:
         last_sync_html = _fmt_dt(config.last_success_at)
 
+    # The real automated cadence, from the handler — the stored sync_frequency
+    # column says "daily" for every connector regardless of what the nightly
+    # refresh actually does with it.
+    _cadence_label, _cadence_tip = handler.sync_cadence()
+
     # HubSpot-specific pull settings: which objects to sync, lifecycle stage and
     # backfill window.
     hubspot_config_html = ""
@@ -1340,7 +1375,7 @@ def _render_management_view(
         <div class="mgmt-section-title">Sync</div>
         <div class="mgmt-row">
           <span class="mgmt-label">Frequency</span>
-          <span class="mgmt-value">{_esc(config.sync_frequency.capitalize() if config.sync_frequency else 'Daily')}</span>
+          <span class="mgmt-value" title="{_esc(_cadence_tip)}" style="cursor:help;border-bottom:1px dotted var(--border)">{_esc(_cadence_label)}</span>
         </div>
         <div class="mgmt-row">
           <span class="mgmt-label">Last successful sync</span>
