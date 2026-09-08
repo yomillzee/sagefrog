@@ -10,10 +10,12 @@ sorted by send date (newest first) until a column heading says otherwise.
 
 Two things make the numbers mean something rather than just sit there:
 
-* **Every rate is compared to the client's own average** across every synced
-  email — on the tiles ("+1.2 pts vs all emails") and under the open and click
-  figures in each row — so an email that over- or under-performed is visible
-  without anyone doing the arithmetic.
+* **Every rate is compared to the average of the selected emails** — the
+  figure on the tiles — under the open and click figures in each row, so the
+  over- and under-performers within the set you are looking at are visible
+  without anyone doing the arithmetic. The baseline is the selection rather
+  than every email ever synced, so narrowing to one campaign or one quarter
+  compares like with like; select a single email and the deltas drop out.
 * **Deliverability and content engagement are on the page**, not just opens:
   bounce rate (over sends) says whether the list is healthy, and click-to-open
   (clicks over opens) separates "the subject line worked" from "the email
@@ -81,11 +83,9 @@ _EXTRA_CSS = """
 .ep-tile { background:var(--panel); border:1px solid var(--line-soft); border-top:3px solid var(--accent); border-radius:9px; padding:13px 14px 14px; }
 .ep-tile-label { color:var(--muted); font-size:.65rem; text-transform:uppercase; font-weight:800; letter-spacing:.06em; }
 .ep-tile-value { margin-top:7px; font-size:1.5rem; line-height:1.1; color:var(--navy); font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+/* Names the set the tile's rate is an average over -- it is the line the rows
+   are measured against, so it carries no delta of its own. */
 .ep-tile-sub { margin-top:6px; font-size:.72rem; color:var(--muted); font-weight:600; }
-/* Better/worse than this client's own average. Green is always "good for you",
-   which for unsubscribes and bounces means the number went down. */
-.ep-tile-sub.up { color:var(--ok); }
-.ep-tile-sub.down { color:var(--err); }
 
 /* Section card -- the dashboard's <section>: same radius, padding and shadow. */
 .ep-card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px 20px 20px; margin-bottom:16px; box-shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }
@@ -275,12 +275,20 @@ _EP_JS = """
   }
 
   var allIds = emails.map(function (e) { return e.id; });
-  // This client's own baseline: every synced email, weighted. Tiles and rows are
-  // measured against it, which is the whole point -- an open rate means nothing
-  // until you know what this list usually does.
+  // The yardstick is *what you selected*, weighted -- so a row's delta answers
+  // "how did this email do against the ones I am looking at" rather than
+  // against every send this client ever made, most of which went to a different
+  // list at a different cadence. It moves with the selection, so it is
+  // recomputed on every render; with one email selected there is nothing to
+  // compare against and the deltas drop out rather than reading "0.0 pts".
   var baseline = {};
-  Object.keys(RATES).forEach(function (k) { baseline[k] = aggRate(allIds, k); });
-  var baselineCount = allIds.length;
+  var baselineCount = 0;
+  function computeBaseline() {
+    baselineCount = selected.filter(function (id) { return byId[id]; }).length;
+    Object.keys(RATES).forEach(function (k) {
+      baseline[k] = baselineCount > 1 ? aggRate(selected, k) : null;
+    });
+  }
 
   // Sort value per column: strings for the two text columns, numbers for the
   // rest. Rates are recomputed from the raw counts so they sort by their true
@@ -314,14 +322,15 @@ _EP_JS = """
   function fmtInt(n) { try { return Number(n || 0).toLocaleString('en-US'); } catch (e) { return String(n || 0); } }
   function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
 
-  // "+1.2 pts" / "-0.30 pts" against the all-email baseline, coloured by whether
-  // that direction is good news for the metric (fewer unsubscribes is good).
+  // "+1.2 pts" / "-0.30 pts" against the selected emails' own average, coloured
+  // by whether that direction is good news for the metric (fewer unsubscribes
+  // is good).
   function delta(value, key) {
     var base = baseline[key];
     if (value == null || base == null) return { text: '', cls: '' };
     var r = RATES[key], diff = value - base;
     var eps = r.dp >= 2 ? 0.005 : 0.05;
-    if (Math.abs(diff) < eps) return { text: 'in line with all ' + baselineCount, cls: '' };
+    if (Math.abs(diff) < eps) return { text: 'in line with the selection', cls: '' };
     var sign = diff > 0 ? '+' : '−';
     return {
       text: sign + Math.abs(diff).toFixed(r.dp) + ' pts',
@@ -333,24 +342,26 @@ _EP_JS = """
   }
 
   // Hero tiles summarise the current selection (rates weighted by their
-  // denominators, so they mean the same thing as the per-row rates) and say how
-  // that selection compares with every email this client has sent.
+  // denominators, so they mean the same thing as the per-row rates). They are
+  // also the line the rows are measured against, so the sub-line names the set
+  // the average is over rather than carrying a delta of its own -- comparing
+  // the selection with itself would only ever read "0.0 pts".
   function renderTiles() {
     var del = 0;
     selected.forEach(function (id) { var e = byId[id]; if (e) del += Number(e._delivered || 0); });
     setText('ep-kpi-count', String(selected.length));
     setText('ep-kpi-delivered', selected.length ? fmtInt(del) : '—');
+    var sub = !selected.length ? 'nothing selected'
+      : selected.length === 1 ? 'this email'
+      : selected.length === allIds.length ? 'across all ' + allIds.length + ' emails'
+      : 'average of the ' + selected.length + ' selected';
     Object.keys(RATES).forEach(function (key) {
       var v = selected.length ? aggRate(selected, key) : null;
       setText('ep-kpi-' + key, fmtRate(v, key));
-      var sub = document.getElementById('ep-kpi-' + key + '-sub');
-      if (!sub) return;
-      var d = delta(v, key);
-      sub.className = 'ep-tile-sub' + (d.cls ? ' ' + d.cls : '');
-      sub.textContent = !selected.length ? 'nothing selected'
-        : selected.length === baselineCount ? 'across all ' + baselineCount + ' emails'
-        : d.text ? (d.cls ? d.text + ' vs all emails' : d.text + ' emails')
-        : 'no data yet';
+      var subEl = document.getElementById('ep-kpi-' + key + '-sub');
+      if (!subEl) return;
+      subEl.className = 'ep-tile-sub';
+      subEl.textContent = sub;
     });
   }
 
@@ -449,7 +460,7 @@ _EP_JS = """
     chart = new Chart(chartEl.getContext('2d'), cfg);
   }
 
-  // A rate cell, with its distance from the client's own average underneath.
+  // A rate cell, with its distance from the selected emails' average underneath.
   function rateCell(e, key, withDelta) {
     var v = emailRate(e, key);
     var pctText = v < 0 ? '—' : (100 * v).toFixed(RATES[key].dp) + '%';
@@ -458,13 +469,15 @@ _EP_JS = """
       var d = delta(100 * v, key);
       if (d.text && d.cls) {
         html += '<span class="ep-delta ' + d.cls + '" title="Compared with the ' +
-                'average across all ' + baselineCount + ' emails">' + esc(d.text) + '</span>';
+                'average across the ' + baselineCount + ' selected emails">' +
+                esc(d.text) + '</span>';
       }
     }
     return '<td>' + html + '</td>';
   }
 
   function renderTable() {
+    computeBaseline();
     tbodyEl.innerHTML = '';
     if (!selected.length) {
       if (emptyEl) emptyEl.style.display = '';
@@ -901,8 +914,8 @@ def _email_payload(emails: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _tile(key: str, label: str, sub: str) -> str:
-    """One metric card. Rate tiles fill their sub-line from the JS with how the
-    selection compares to every email this client has sent; `sub` is the static
+    """One metric card. Rate tiles fill their sub-line from the JS with the set
+    the average is over ("average of the 8 selected"); `sub` is the static
     fallback shown before the first render."""
     return (
         f'<div class="ep-tile"><div class="ep-tile-label">{_esc(label)}</div>'
@@ -969,8 +982,8 @@ def render_email_performance(
 
     # Hero KPI tiles — values are filled live by the JS from the current
     # selection, so they read as a real dashboard summary (like Lead Tracking /
-    # Overview) rather than a static header. Every rate tile carries how the
-    # selection compares with this client's own all-email average.
+    # Overview) rather than a static header. Each rate tile is also the average
+    # its rows are measured against, and says which emails it is over.
     tiles = (
         '<div class="ep-tiles">'
         '<div class="ep-tile"><div class="ep-tile-label">Emails selected</div>'
@@ -1060,10 +1073,10 @@ def render_email_performance(
         '<div class="ep-card">'
         '<div class="ep-card-head">'
         '<div class="ep-card-head-titles"><h2>Performance</h2>'
-        f'<span class="ep-card-note">Open, click and unsub rates are over deliveries; '
-        f'bounce rate is over sends. The small figure under an open or click rate is '
-        f'its distance from the average across all {total} emails. Click a column '
-        'heading to sort.</span></div>'
+        '<span class="ep-card-note">Open, click and unsub rates are over deliveries; '
+        'bounce rate is over sends. The small figure under an open or click rate is '
+        'its distance from the average across the emails you have selected, so it '
+        'moves as you change the selection. Click a column heading to sort.</span></div>'
         f'<div class="ep-tools">{picker_control}{export_control}</div>'
         '</div>'
         '<div class="ep-table-wrap"><table class="ep-table">'
