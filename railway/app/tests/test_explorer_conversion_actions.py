@@ -234,6 +234,32 @@ class RendererWiringTests(unittest.TestCase):
         ):
             self.assertIn(f"getJson(withDates({api}))", self.html)
 
+    def test_the_breakdowns_are_also_fetched_for_the_comparison_window(self):
+        # Without this, selecting a conversion action drops the vs-previous
+        # delta entirely -- there is nothing to diff against for that one
+        # action even when the Compare picker has a window selected.
+        for api in (
+            "GOOGLE_CONV_ACTIONS_API",
+            "META_CONV_ACTIONS_API",
+            "MICROSOFT_CONV_ACTIONS_API",
+        ):
+            self.assertIn(
+                f"getJson(withDatesRange({api}, compareStart, compareEnd))", self.html
+            )
+
+    def test_verified_conversions_are_also_fetched_for_the_comparison_window(self):
+        # Same reasoning as the conversion-action breakdowns: GA4-verified
+        # conv. needs a prior-period figure to diff against too.
+        for api in (
+            "META_VERIFIED_API",
+            "GOOGLE_VERIFIED_API",
+            "LINKEDIN_VERIFIED_API",
+            "MICROSOFT_VERIFIED_API",
+        ):
+            self.assertIn(
+                f"getJson(withDatesRange({api}, compareStart, compareEnd))", self.html
+            )
+
     def test_selection_survives_a_reload(self):
         self.assertIn("localStorage.setItem(CONV_STORAGE_KEY, selectedConvAction)", self.html)
 
@@ -247,15 +273,27 @@ class RendererWiringTests(unittest.TestCase):
         self.assertIn("convSelectionActive()", val)
         self.assertIn("m.conversions_sel", val)
 
-    def test_selected_action_drops_the_vs_previous_chip(self):
-        # The breakdown is fetched for the current window only, so there is no
-        # prior-period figure to diff against — showing the unfiltered delta
-        # next to a filtered number would read as a collapse.
+    def test_selected_action_keeps_the_vs_previous_chip(self):
+        # The breakdown is now fetched for the comparison window too (see
+        # test_the_breakdowns_are_also_fetched_for_the_comparison_window), so
+        # the segmented Conv. column keeps its delta instead of dropping it —
+        # guarded by the same _convSelNa flag as the "—" cell itself.
         cells = _js_block(self.html, "function metricCells(")
-        self.assertIn("c.key==='conversions' && convSelectionActive()", cells)
-        self.assertNotIn(
-            "summaryDeltaHtml", cells[cells.index("c.key==='conversions'") : cells.index("const cell=c.format")]
-        )
+        branch = cells[cells.index("c.key==='conversions'") : cells.index("const cell=c.format(wc[c.key]);")]
+        self.assertIn("summaryDeltaHtml", branch)
+        self.assertIn("!m._convSelNa", branch)
+        self.assertIn("!prevM._convSelNa", branch)
+
+    def test_verified_conv_column_also_gets_a_vs_previous_chip(self):
+        # GA4-verified conv. previously never carried a delta at all — now it
+        # is fetched for the comparison window (see
+        # test_verified_conversions_are_also_fetched_for_the_comparison_window)
+        # and can be diffed like every other column.
+        cells = _js_block(self.html, "function metricCells(")
+        branch = cells[cells.index("c.key==='verified_sel'") : cells.index("c.key==='conversions'")]
+        self.assertIn("summaryDeltaHtml", branch)
+        self.assertIn("!m._verifiedNa", branch)
+        self.assertIn("!prevM._verifiedNa", branch)
 
 
 class SelectionLogicTests(unittest.TestCase):
@@ -286,6 +324,7 @@ class SelectionLogicTests(unittest.TestCase):
                     "function explorerAdName(",
                     "function convSelectionActive()",
                     "function applyConvSelection(",
+                    "function currentTreeCtx()",
                     "function buildExplorerTree(",
                     "function explorerTotals(",
                 )

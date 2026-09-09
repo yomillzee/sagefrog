@@ -273,6 +273,17 @@
     let verifiedByLinkedinGroupEvent = {};
     let verifiedByMicrosoftCampaign = {};
     let verifiedByMicrosoftCampaignEvent = {};
+    // Same shape, for the Compare picker's window -- fetched alongside the
+    // current-period verified calls so the Verified conv. card and column can
+    // show a "vs previous" delta like every other metric on the page.
+    let verifiedByAdIdPrev = {};
+    let verifiedByAdIdEventPrev = {};
+    let verifiedByGoogleCampaignIdPrev = {};
+    let verifiedByGoogleCampaignIdEventPrev = {};
+    let verifiedByLinkedinGroupPrev = {};
+    let verifiedByLinkedinGroupEventPrev = {};
+    let verifiedByMicrosoftCampaignPrev = {};
+    let verifiedByMicrosoftCampaignEventPrev = {};
     let keyEventList = [];
     // Platform conversion actions. Google and Meta report the split at ad grain
     // (keyed by ad id); Microsoft's Goals and Funnels report stops at the ad
@@ -284,30 +295,56 @@
     let convByGoogleAdId = {};
     let convByMetaAdId = {};
     let convByMicrosoftGroupId = {};
+    // Same shape, for the Compare picker's window -- see the verifiedBy*Prev
+    // maps above for why these exist.
+    let convByGoogleAdIdPrev = {};
+    let convByMetaAdIdPrev = {};
+    let convByMicrosoftGroupIdPrev = {};
     function normalizeLiName(name) { return String(name||'').replace(/\+/g,' ').replace(/\s+/g,' ').trim().toLowerCase(); }
     let selectedKeyEvent = (function(){ try { return localStorage.getItem(KE_STORAGE_KEY) || '__all__'; } catch(e) { return '__all__'; } })();
-    function applyVerifiedSelection() {
-      for (const r of explorerRows) {
+    // rows/byAdId/byAdIdEvent default to the current-period data; pass the
+    // *Prev maps and explorerPrevRows to resolve the same selection against
+    // the comparison window instead.
+    function applyVerifiedSelection(rows, byAdId, byAdIdEvent) {
+      rows = rows || explorerRows;
+      byAdId = byAdId || verifiedByAdId;
+      byAdIdEvent = byAdIdEvent || verifiedByAdIdEvent;
+      for (const r of rows) {
         const id=String(r.ad_id||'');
-        r.verified = num(verifiedByAdId[id]);
-        r.verified_sel = (selectedKeyEvent==='__all__') ? r.verified : num((verifiedByAdIdEvent[id]||{})[selectedKeyEvent]);
+        r.verified = num(byAdId[id]);
+        r.verified_sel = (selectedKeyEvent==='__all__') ? r.verified : num((byAdIdEvent[id]||{})[selectedKeyEvent]);
       }
     }
     let selectedConvAction = (function(){ try { return localStorage.getItem(CONV_STORAGE_KEY) || '__all__'; } catch(e) { return '__all__'; } })();
     function convSelectionActive() { return selectedConvAction!=='__all__'; }
     // Resolve the selected action onto every row. With no selection the column is
     // the platform's own Conv. exactly as before -- the selector is additive, it
-    // never changes the default reading of the table.
-    function applyConvSelection(rows) {
+    // never changes the default reading of the table. byGoogleAdId/byMetaAdId
+    // default to the current-period maps; pass the *Prev maps to resolve the
+    // same selection against the comparison window instead.
+    function applyConvSelection(rows, byGoogleAdId, byMetaAdId) {
+      byGoogleAdId = byGoogleAdId || convByGoogleAdId;
+      byMetaAdId = byMetaAdId || convByMetaAdId;
       const all=!convSelectionActive();
       for (const r of rows) {
         if (all) { r.conversions_sel=num(r.conversions); r._convSelNa=false; continue; }
         const p=(r.platform||'').toLowerCase();
-        if (p==='google') { r.conversions_sel=num((convByGoogleAdId[String(r.ad_id||'')]||{})[selectedConvAction]); r._convSelNa=false; }
-        else if (p==='meta') { r.conversions_sel=num((convByMetaAdId[String(r.ad_id||'')]||{})[selectedConvAction]); r._convSelNa=false; }
+        if (p==='google') { r.conversions_sel=num((byGoogleAdId[String(r.ad_id||'')]||{})[selectedConvAction]); r._convSelNa=false; }
+        else if (p==='meta') { r.conversions_sel=num((byMetaAdId[String(r.ad_id||'')]||{})[selectedConvAction]); r._convSelNa=false; }
         // Microsoft resolves at the ad-group node in buildExplorerTree; LinkedIn
         // has nothing to resolve. Both leave the ad row itself dashed.
         else { r.conversions_sel=0; r._convSelNa=true; }
+      }
+    }
+    // Re-resolves both selections against both windows -- call this whenever
+    // the underlying data reloads or the user changes either dropdown, so the
+    // comparison window's tree stays in sync with what the table is showing.
+    function applyAllSelections() {
+      applyVerifiedSelection(explorerRows, verifiedByAdId, verifiedByAdIdEvent);
+      applyConvSelection(explorerRows, convByGoogleAdId, convByMetaAdId);
+      if (explorerPrevRows.length) {
+        applyVerifiedSelection(explorerPrevRows, verifiedByAdIdPrev, verifiedByAdIdEventPrev);
+        applyConvSelection(explorerPrevRows, convByGoogleAdIdPrev, convByMetaAdIdPrev);
       }
     }
     function convSelectHtml() {
@@ -405,7 +442,34 @@
     function zeroMetrics() { return {spend:0,impressions:0,clicks:0,conversions:0,conversions_sel:0,verified:0,verified_sel:0}; }
     function addMetrics(acc,r) { acc.spend+=num(r.spend);acc.impressions+=num(r.impressions);acc.clicks+=num(r.clicks);acc.conversions+=num(r.conversions);acc.conversions_sel+=num(r.conversions_sel);acc.verified+=num(r.verified);acc.verified_sel+=num(r.verified_sel); }
     function withCtr(m) { return {...m,ctr:m.impressions?(num(m.clicks)/num(m.impressions)*100):0}; }
-    function buildExplorerTree(rows) {
+    // ctx carries the verified/conv-action maps to resolve campaign- and
+    // group-level figures from -- the current-period globals by default, or
+    // the *Prev maps when building the comparison window's tree (see
+    // prevTreeCtx below). The row-level fields (verified_sel, conversions_sel
+    // for Google/Meta ads) are already resolved onto `rows` by
+    // applyVerifiedSelection/applyConvSelection before this runs, against
+    // whichever window's maps match the rows passed in.
+    function currentTreeCtx() {
+      return {
+        verifiedByGoogleCampaignId, verifiedByGoogleCampaignIdEvent,
+        verifiedByLinkedinGroup, verifiedByLinkedinGroupEvent,
+        verifiedByMicrosoftCampaign, verifiedByMicrosoftCampaignEvent,
+        convByMicrosoftGroupId,
+      };
+    }
+    function prevTreeCtx() {
+      return {
+        verifiedByGoogleCampaignId: verifiedByGoogleCampaignIdPrev,
+        verifiedByGoogleCampaignIdEvent: verifiedByGoogleCampaignIdEventPrev,
+        verifiedByLinkedinGroup: verifiedByLinkedinGroupPrev,
+        verifiedByLinkedinGroupEvent: verifiedByLinkedinGroupEventPrev,
+        verifiedByMicrosoftCampaign: verifiedByMicrosoftCampaignPrev,
+        verifiedByMicrosoftCampaignEvent: verifiedByMicrosoftCampaignEventPrev,
+        convByMicrosoftGroupId: convByMicrosoftGroupIdPrev,
+      };
+    }
+    function buildExplorerTree(rows, ctx) {
+      ctx = ctx || currentTreeCtx();
       const campaigns=new Map();
       for (const r of rows) {
         const cName=r.campaign_name||'—', platform=(r.platform||'google').toLowerCase(), cKey=platform+'|'+cName;
@@ -426,20 +490,20 @@
       const cmpMetric=(x,y)=>mul*(explorerMetricVal(x,key)-explorerMetricVal(y,key));
       const cmpNode=(a,b)=> key==='name' ? cmpName(a[1].name,b[1].name) : cmpMetric(a[1].metrics,b[1].metrics);
       // No verified data yet (table not synced) -> show "—", not a misleading 0.
-      const gHasData = Object.keys(verifiedByGoogleCampaignId).length > 0;
-      const lHasData = Object.keys(verifiedByLinkedinGroup).length > 0;
-      const mHasData = Object.keys(verifiedByMicrosoftCampaign).length > 0;
+      const gHasData = Object.keys(ctx.verifiedByGoogleCampaignId).length > 0;
+      const lHasData = Object.keys(ctx.verifiedByLinkedinGroup).length > 0;
+      const mHasData = Object.keys(ctx.verifiedByMicrosoftCampaign).length > 0;
       for (const camp of campaigns.values()) {
         // Google verified is a campaign-level number (native GA4 link); attach it
         // to the campaign node — sub-levels stay "—" (no reliable per-ad id).
         if (camp.platform==='google') {
           if (gHasData && camp.campaign_id) {
             const cid=String(camp.campaign_id);
-            const gv=num(verifiedByGoogleCampaignId[cid]);
+            const gv=num(ctx.verifiedByGoogleCampaignId[cid]);
             camp.metrics.verified=gv;
             camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
               ? gv
-              : num((verifiedByGoogleCampaignIdEvent[cid]||{})[selectedKeyEvent]);
+              : num((ctx.verifiedByGoogleCampaignIdEvent[cid]||{})[selectedKeyEvent]);
           } else {
             camp.metrics._verifiedNa=true;
           }
@@ -449,11 +513,11 @@
         else if (camp.platform==='linkedin') {
           if (lHasData) {
             const gname=normalizeLiName(camp.name);
-            const lv=num(verifiedByLinkedinGroup[gname]);
+            const lv=num(ctx.verifiedByLinkedinGroup[gname]);
             camp.metrics.verified=lv;
             camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
               ? lv
-              : num((verifiedByLinkedinGroupEvent[gname]||{})[selectedKeyEvent]);
+              : num((ctx.verifiedByLinkedinGroupEvent[gname]||{})[selectedKeyEvent]);
           } else {
             camp.metrics._verifiedNa=true;
           }
@@ -464,11 +528,11 @@
         else if (camp.platform==='microsoft') {
           if (mHasData) {
             const mname=normalizeLiName(camp.name);
-            const mv=num(verifiedByMicrosoftCampaign[mname]);
+            const mv=num(ctx.verifiedByMicrosoftCampaign[mname]);
             camp.metrics.verified=mv;
             camp.metrics.verified_sel=(selectedKeyEvent==='__all__')
               ? mv
-              : num((verifiedByMicrosoftCampaignEvent[mname]||{})[selectedKeyEvent]);
+              : num((ctx.verifiedByMicrosoftCampaignEvent[mname]||{})[selectedKeyEvent]);
           } else {
             camp.metrics._verifiedNa=true;
           }
@@ -486,7 +550,7 @@
           if (camp.platform==='microsoft') {
             for (const grp of camp.groups.values()) {
               const gid=String(grp.ad_group_id||'');
-              const hit=gid ? convByMicrosoftGroupId[gid] : null;
+              const hit=gid ? ctx.convByMicrosoftGroupId[gid] : null;
               if (hit) { grp.metrics.conversions_sel=num(hit[selectedConvAction]); grp.metrics._convSelNa=false; }
               else { grp.metrics._convSelNa=true; }
             }
@@ -512,14 +576,26 @@
     function metricCells(m, prevM) {
       const wc=withCtr(m), prevWc=prevM?withCtr(prevM):null;
       return metricCols().map(c=>{
-        if (c.key==='verified_sel') { const cell=m._verifiedNa?'—':c.format(wc[c.key]); return `<td${c.cls?` class="${c.cls}"`:''}>${cell}</td>`; }
-        // A selected conversion action has no comparison-window figure behind
-        // it (the breakdown is only fetched for the current window), so the
-        // vs-previous chip is dropped rather than compared against the
-        // unfiltered total, which would read as a collapse.
+        if (c.key==='verified_sel') {
+          const cell=m._verifiedNa?'—':c.format(wc[c.key]);
+          // Both windows are fetched (see verifiedBy*Prev), so this reads
+          // exactly like every other column's delta -- dropped only when
+          // either side can't answer for GA4-verified conv. specifically.
+          const delta=(prevM && !m._verifiedNa && !prevM._verifiedNa)
+            ? summaryDeltaHtml(wc[c.key],prevWc[c.key],EXPLORER_METRIC_DIR[c.key])
+            : '';
+          return `<td${c.cls?` class="${c.cls}"`:''}>${cell}${delta?`<div class="expl-row-delta">${delta}</div>`:''}</td>`;
+        }
         if (c.key==='conversions' && convSelectionActive()) {
           const cell=m._convSelNa?'—':c.format(num(m.conversions_sel));
-          return `<td${c.cls?` class="${c.cls}"`:''}>${cell}</td>`;
+          // The conversion-action breakdown is now fetched for the comparison
+          // window too (see convBy*Prev), so the segmented Conv. column can
+          // carry the same delta as the unsegmented one -- dropped only when
+          // either side has no figure for this specific action.
+          const delta=(prevM && !m._convSelNa && !prevM._convSelNa)
+            ? summaryDeltaHtml(num(m.conversions_sel),num(prevM.conversions_sel),EXPLORER_METRIC_DIR.conversions)
+            : '';
+          return `<td${c.cls?` class="${c.cls}"`:''}>${cell}${delta?`<div class="expl-row-delta">${delta}</div>`:''}</td>`;
         }
         const cell=c.format(wc[c.key]);
         const delta=prevWc?summaryDeltaHtml(wc[c.key],prevWc[c.key],EXPLORER_METRIC_DIR[c.key]):'';
@@ -681,15 +757,10 @@
       if (!_campaignAllowSet.size) return explorerPrevRows;
       return explorerPrevRows.filter(r => _campaignAllowSet.has(String(r.campaign_name||'')));
     }
-    // Direction each explorer metric moves in that counts as "good," for the
-    // vs-previous delta coloring — same convention as SUMMARY_CARDS above.
-    // Verified conv. isn't included: it's stitched together from separate
-    // per-platform verified-conversions calls that aren't fetched for the
-    // comparison window (yet), so it has nothing to diff against.
     // Which direction is "good" per metric, for colouring row deltas. Spend and
     // CTR are both 'neutral' -- see SUMMARY_CARDS for why a CTR dip is not
     // automatically bad -- so neither ever colours red or green on its own.
-    const EXPLORER_METRIC_DIR = { spend:'neutral', impressions:'up', clicks:'up', ctr:'neutral', conversions:'up' };
+    const EXPLORER_METRIC_DIR = { spend:'neutral', impressions:'up', clicks:'up', ctr:'neutral', conversions:'up', verified_sel:'up' };
     function renderExplorer() {
       const base=explorerAllowedRows();
       const filtered=base.filter(explorerRowMatches);
@@ -701,9 +772,11 @@
       // "vs previous" delta consistent with the rest of the dashboard.
       const prevFiltered = compareStart ? explorerPrevAllowedRows().filter(explorerRowMatches) : null;
       const aggPrev = prevFiltered ? withCtr(prevFiltered.reduce((a,r)=>{addMetrics(a,r);return a;}, zeroMetrics())) : null;
-      // Same tree, built from the comparison window, so each campaign row can
-      // show a "vs previous" delta alongside the grand total's.
-      const prevTree = prevFiltered ? buildExplorerTree(prevFiltered) : null;
+      // Same tree, built from the comparison window (against the *Prev
+      // verified/conv-action maps), so each campaign row can show a "vs
+      // previous" delta alongside the grand total's -- GA4-verified and
+      // segmented conversions included.
+      const prevTree = prevFiltered ? buildExplorerTree(prevFiltered, prevTreeCtx()) : null;
       // Google verified is campaign-level (not on rows), so add it once per distinct
       // Google campaign in the filtered set for the summary total.
       const gcSeen=new Set(); let googleVerifiedTotal=0;
@@ -714,12 +787,25 @@
       // Microsoft verified is campaign-level (name-matched); add once per campaign.
       const msSeen=new Set(); let microsoftVerifiedTotal=0;
       for (const r of filtered) { if (r.platform==='microsoft') { const mn=normalizeLiName(r.campaign_name||''); if (mn && !msSeen.has(mn)) { msSeen.add(mn); microsoftVerifiedTotal+=num(verifiedByMicrosoftCampaign[mn]); } } }
+      // Same three totals, over the comparison window, so the Verified conv.
+      // card can show a delta too.
+      let googleVerifiedTotalPrev=0, linkedinVerifiedTotalPrev=0, microsoftVerifiedTotalPrev=0;
+      if (prevFiltered) {
+        const gcSeenP=new Set();
+        for (const r of prevFiltered) { const cid=String(r.campaign_id||''); if (r.platform==='google' && cid && !gcSeenP.has(cid)) { gcSeenP.add(cid); googleVerifiedTotalPrev+=num(verifiedByGoogleCampaignIdPrev[cid]); } }
+        const liSeenP=new Set();
+        for (const r of prevFiltered) { if (r.platform==='linkedin') { const gn=normalizeLiName(r.campaign_name||''); if (gn && !liSeenP.has(gn)) { liSeenP.add(gn); linkedinVerifiedTotalPrev+=num(verifiedByLinkedinGroupPrev[gn]); } } }
+        const msSeenP=new Set();
+        for (const r of prevFiltered) { if (r.platform==='microsoft') { const mn=normalizeLiName(r.campaign_name||''); if (mn && !msSeenP.has(mn)) { msSeenP.add(mn); microsoftVerifiedTotalPrev+=num(verifiedByMicrosoftCampaignPrev[mn]); } } }
+      }
       const el=document.getElementById('explorerTable');
       const tree=buildExplorerTree(filtered);
       // The Conversions card follows the column's selector, and it is totalled
       // from the tree rather than the raw rows: Microsoft resolves its split at
-      // the ad-group node, so summing rows would report zero for it.
+      // the ad-group node, so summing rows would report zero for it. Same
+      // reasoning applies to the comparison-window total below.
       const treeTotals=explorerTotals(tree);
+      const prevTreeTotals = prevTree ? explorerTotals(prevTree) : null;
       const convActive=convSelectionActive();
       const scards=document.getElementById('explorerSummaryCards');
       // A card without a matching chart metric (Verified conv. hidden for this
@@ -735,13 +821,26 @@
           const active=explorerTrendMetrics.has(k);
           if (k==='conversions' && convActive) {
             const val=treeTotals._convSelNa?'—':count(num(treeTotals.conversions_sel));
-            return `<button type="button" class="card metric-card${active?' active':''}" data-metric="${k}" aria-pressed="${active?'true':'false'}"><div class="card-title">${esc(selectedConvAction)}</div><div class="card-value">${val}</div><div class="card-foot"><span class="cmp-delta flat">of ${count(agg.conversions)} conversions</span></div></button>`;
+            // The conversion-action breakdown is fetched for the comparison
+            // window too now, so show the same delta as every other card once
+            // both windows can answer for this action; otherwise fall back to
+            // the "of N conversions" context line as before.
+            const cmpAvail = prevTreeTotals && !prevTreeTotals._convSelNa && !treeTotals._convSelNa;
+            const delta = cmpAvail ? summaryDeltaHtml(num(treeTotals.conversions_sel), num(prevTreeTotals.conversions_sel), EXPLORER_METRIC_DIR.conversions) : '';
+            const foot = delta || `<span class="cmp-delta flat">of ${count(agg.conversions)} conversions</span>`;
+            return `<button type="button" class="card metric-card${active?' active':''}" data-metric="${k}" aria-pressed="${active?'true':'false'}"><div class="card-title">${esc(selectedConvAction)}</div><div class="card-value">${val}</div><div class="card-foot">${foot}</div></button>`;
           }
           const delta=aggPrev?summaryDeltaHtml(agg[k],aggPrev[k],EXPLORER_METRIC_DIR[k]):'';
           return `<button type="button" class="card metric-card${active?' active':''}" data-metric="${k}" aria-pressed="${active?'true':'false'}"><div class="card-title">${l}</div><div class="card-value">${fmt(agg[k])}</div>${delta?`<div class="card-foot">${delta}</div>`:''}</button>`;
         }).join('') + (showVerifiedConv ? (()=>{
           const active=explorerTrendMetrics.has('verified');
-          return `<button type="button" class="card metric-card${active?' active':''}" data-metric="verified" aria-pressed="${active?'true':'false'}"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${count(num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal+microsoftVerifiedTotal)}</div></button>`;
+          const curVerifiedTotal = num(agg.verified)+googleVerifiedTotal+linkedinVerifiedTotal+microsoftVerifiedTotal;
+          // Verified conv. is stitched together from separate per-platform
+          // calls; the comparison window fetches the same calls (see
+          // verifiedBy*Prev), so the total can be diffed the same way.
+          const prevVerifiedTotal = prevFiltered ? (num(aggPrev.verified)+googleVerifiedTotalPrev+linkedinVerifiedTotalPrev+microsoftVerifiedTotalPrev) : null;
+          const vDelta = prevVerifiedTotal!=null ? summaryDeltaHtml(curVerifiedTotal, prevVerifiedTotal, 'up') : '';
+          return `<button type="button" class="card metric-card${active?' active':''}" data-metric="verified" aria-pressed="${active?'true':'false'}"><div class="card-title">Verified conv. (GA4)</div><div class="card-value">${count(curVerifiedTotal)}</div>${vDelta?`<div class="card-foot">${vDelta}</div>`:''}</button>`;
         })() : '');
         // Multi-select, like the paid-trends metric chips: a card toggles its
         // metric on or off instead of replacing the selection, so Spend and
@@ -789,7 +888,10 @@
         // a new date range all re-total it on the next render.
         const totals=explorerTotals(tree);
         const nCamp=tree.size;
-        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${nCamp} campaign${nCamp===1?'':'s'}</span></td>${metricCells(totals,aggPrev)}</tr></tfoot>`;
+        // prevTreeTotals rather than aggPrev: it carries the same
+        // _convSelNa/_verifiedNa flags as `totals`, and resolves Microsoft's
+        // ad-group-grain conversions_sel correctly, same as the current period.
+        const foot=`<tfoot><tr class="expl-total"><td class="left"><span class="tree-name">Total</span><span class="tot-sub">${nCamp} campaign${nCamp===1?'':'s'}</span></td>${metricCells(totals,prevTreeTotals)}</tr></tfoot>`;
         el.innerHTML=head+`<tbody>${body}</tbody>`+foot;
       }
       const filterActive=[...explorerFilterState.values()].some(s=>s.size);
@@ -1531,19 +1633,20 @@
       // set, so a page load with no comparison configured yet skips these.
       const cmpOn = !!compareStart;
       const EMPTY_CONV={actions:[],by_entity:{}};
-      const [g,l,m,ms,kw,ver,gver,lver,mver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev]=await Promise.all([
+      const EMPTY_META_VER={by_ad_id:{}}, EMPTY_GOOGLE_VER={by_campaign_id:{}}, EMPTY_LI_VER={by_group_name:{}}, EMPTY_MS_VER={by_campaign_name:{}};
+      const [
+        g,l,m,ms,kw,ver,gver,lver,mver,gconv,mconv,msconv,gPrev,lPrev,mPrev,msPrev,
+        verPrev,gverPrev,lverPrev,mverPrev,gconvPrev,mconvPrev,msconvPrev,
+      ]=await Promise.all([
         getJson(withDates(EXPLORER_API)).catch(()=>({rows:[]})),
         getJson(withDates(LINKEDIN_EXPLORER_API)).catch(()=>({rows:[]})),
         getJson(withDates(META_EXPLORER_API)).catch(()=>({rows:[]})),
         getJson(withDates(MICROSOFT_EXPLORER_API)).catch(()=>({rows:[]})),
         getJson(withDates(GOOGLE_ADS_KEYWORDS_API)).catch(()=>({rows:[]})),
-        getJson(withDates(META_VERIFIED_API)).catch(()=>({by_ad_id:{}})),
-        getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>({by_campaign_id:{}})),
-        getJson(withDates(LINKEDIN_VERIFIED_API)).catch(()=>({by_group_name:{}})),
-        getJson(withDates(MICROSOFT_VERIFIED_API)).catch(()=>({by_campaign_name:{}})),
-        // Conversion-action breakdowns. Fetched for the current window only --
-        // the selector's job is "which action is this", not "how did this action
-        // move", and the Conv. column drops its delta while one is selected.
+        getJson(withDates(META_VERIFIED_API)).catch(()=>EMPTY_META_VER),
+        getJson(withDates(GOOGLE_VERIFIED_API)).catch(()=>EMPTY_GOOGLE_VER),
+        getJson(withDates(LINKEDIN_VERIFIED_API)).catch(()=>EMPTY_LI_VER),
+        getJson(withDates(MICROSOFT_VERIFIED_API)).catch(()=>EMPTY_MS_VER),
         getJson(withDates(GOOGLE_CONV_ACTIONS_API)).catch(()=>EMPTY_CONV),
         getJson(withDates(META_CONV_ACTIONS_API)).catch(()=>EMPTY_CONV),
         getJson(withDates(MICROSOFT_CONV_ACTIONS_API)).catch(()=>EMPTY_CONV),
@@ -1551,6 +1654,17 @@
         cmpOn ? getJson(withDatesRange(LINKEDIN_EXPLORER_API, compareStart, compareEnd)).catch(()=>({rows:[]})) : Promise.resolve({rows:[]}),
         cmpOn ? getJson(withDatesRange(META_EXPLORER_API, compareStart, compareEnd)).catch(()=>({rows:[]})) : Promise.resolve({rows:[]}),
         cmpOn ? getJson(withDatesRange(MICROSOFT_EXPLORER_API, compareStart, compareEnd)).catch(()=>({rows:[]})) : Promise.resolve({rows:[]}),
+        // Same verified-conversions and conversion-action-breakdown calls,
+        // over the comparison window -- fetched only when a comparison is
+        // set, so the Verified conv. and segmented Conv. columns/cards can
+        // carry a "vs previous" delta like every other metric on the page.
+        cmpOn ? getJson(withDatesRange(META_VERIFIED_API, compareStart, compareEnd)).catch(()=>EMPTY_META_VER) : Promise.resolve(EMPTY_META_VER),
+        cmpOn ? getJson(withDatesRange(GOOGLE_VERIFIED_API, compareStart, compareEnd)).catch(()=>EMPTY_GOOGLE_VER) : Promise.resolve(EMPTY_GOOGLE_VER),
+        cmpOn ? getJson(withDatesRange(LINKEDIN_VERIFIED_API, compareStart, compareEnd)).catch(()=>EMPTY_LI_VER) : Promise.resolve(EMPTY_LI_VER),
+        cmpOn ? getJson(withDatesRange(MICROSOFT_VERIFIED_API, compareStart, compareEnd)).catch(()=>EMPTY_MS_VER) : Promise.resolve(EMPTY_MS_VER),
+        cmpOn ? getJson(withDatesRange(GOOGLE_CONV_ACTIONS_API, compareStart, compareEnd)).catch(()=>EMPTY_CONV) : Promise.resolve(EMPTY_CONV),
+        cmpOn ? getJson(withDatesRange(META_CONV_ACTIONS_API, compareStart, compareEnd)).catch(()=>EMPTY_CONV) : Promise.resolve(EMPTY_CONV),
+        cmpOn ? getJson(withDatesRange(MICROSOFT_CONV_ACTIONS_API, compareStart, compareEnd)).catch(()=>EMPTY_CONV) : Promise.resolve(EMPTY_CONV),
       ]);
       verifiedByAdId=(ver&&ver.by_ad_id)?ver.by_ad_id:{};
       verifiedByAdIdEvent=(ver&&ver.by_ad_id_event)?ver.by_ad_id_event:{};
@@ -1560,6 +1674,14 @@
       verifiedByLinkedinGroupEvent=(lver&&lver.by_group_name_event)?lver.by_group_name_event:{};
       verifiedByMicrosoftCampaign=(mver&&mver.by_campaign_name)?mver.by_campaign_name:{};
       verifiedByMicrosoftCampaignEvent=(mver&&mver.by_campaign_name_event)?mver.by_campaign_name_event:{};
+      verifiedByAdIdPrev=(verPrev&&verPrev.by_ad_id)?verPrev.by_ad_id:{};
+      verifiedByAdIdEventPrev=(verPrev&&verPrev.by_ad_id_event)?verPrev.by_ad_id_event:{};
+      verifiedByGoogleCampaignIdPrev=(gverPrev&&gverPrev.by_campaign_id)?gverPrev.by_campaign_id:{};
+      verifiedByGoogleCampaignIdEventPrev=(gverPrev&&gverPrev.by_campaign_id_event)?gverPrev.by_campaign_id_event:{};
+      verifiedByLinkedinGroupPrev=(lverPrev&&lverPrev.by_group_name)?lverPrev.by_group_name:{};
+      verifiedByLinkedinGroupEventPrev=(lverPrev&&lverPrev.by_group_name_event)?lverPrev.by_group_name_event:{};
+      verifiedByMicrosoftCampaignPrev=(mverPrev&&mverPrev.by_campaign_name)?mverPrev.by_campaign_name:{};
+      verifiedByMicrosoftCampaignEventPrev=(mverPrev&&mverPrev.by_campaign_name_event)?mverPrev.by_campaign_name_event:{};
       const metaEvents=(ver&&ver.events)?ver.events:[];
       const googleEvents=(gver&&gver.events)?gver.events:[];
       const linkedinEvents=(lver&&lver.events)?lver.events:[];
@@ -1569,6 +1691,9 @@
       convByGoogleAdId=(gconv&&gconv.by_entity)?gconv.by_entity:{};
       convByMetaAdId=(mconv&&mconv.by_entity)?mconv.by_entity:{};
       convByMicrosoftGroupId=(msconv&&msconv.by_entity)?msconv.by_entity:{};
+      convByGoogleAdIdPrev=(gconvPrev&&gconvPrev.by_entity)?gconvPrev.by_entity:{};
+      convByMetaAdIdPrev=(mconvPrev&&mconvPrev.by_entity)?mconvPrev.by_entity:{};
+      convByMicrosoftGroupIdPrev=(msconvPrev&&msconvPrev.by_entity)?msconvPrev.by_entity:{};
       // One selector across every platform, so the same action name coming from
       // two platforms is one option that sums both. Ordered by total conversions
       // (each payload is already biggest-first) rather than alphabetically.
@@ -1585,8 +1710,7 @@
       }
       explorerRows=normalizeExplorerRows(g,l,m,ms);
       explorerPrevRows=cmpOn ? normalizeExplorerRows(gPrev,lPrev,mPrev,msPrev) : [];
-      applyVerifiedSelection();
-      applyConvSelection(explorerRows);
+      applyAllSelections();
       renderExplorer();
       // Keyword table: only show the section when this client actually has
       // Google Ads search-keyword data (empty for LinkedIn/Meta-only clients).
@@ -3338,7 +3462,9 @@
       if (conv) {
         selectedConvAction = conv.value || '__all__';
         try { localStorage.setItem(CONV_STORAGE_KEY, selectedConvAction); } catch(e) {}
-        applyConvSelection(explorerRows);
+        // Re-resolve against both windows, so the comparison-window tree
+        // reflects the newly selected action too and the delta stays correct.
+        applyAllSelections();
         renderExplorer();
         return;
       }
@@ -3346,7 +3472,7 @@
       if (!sel) return;
       selectedKeyEvent = sel.value || '__all__';
       try { localStorage.setItem(KE_STORAGE_KEY, selectedKeyEvent); } catch(e) {}
-      applyVerifiedSelection();
+      applyAllSelections();
       renderExplorer();
     });
     // ---- LinkedIn audience: dimension tabs ----

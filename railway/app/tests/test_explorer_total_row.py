@@ -71,7 +71,11 @@ class ExplorerTotalRowMarkupTests(unittest.TestCase):
         # Not from explorerRows / filtered — the tree is what the campaign rows
         # were built from, so footer and rows can never disagree.
         self.assertIn("const totals=explorerTotals(tree);", self.html)
-        self.assertIn("metricCells(totals,aggPrev)", self.html)
+        # prevTreeTotals, not the flat aggPrev reduce: it carries the same
+        # _convSelNa/_verifiedNa flags as `totals` and resolves Microsoft's
+        # ad-group-grain conversions_sel correctly, same as the current period.
+        self.assertIn("const prevTreeTotals = prevTree ? explorerTotals(prevTree) : null;", self.html)
+        self.assertIn("metricCells(totals,prevTreeTotals)", self.html)
 
     def test_footer_reuses_the_metric_columns(self):
         # metricCells() walks metricCols() -- METRIC_COLS minus whatever the
@@ -79,8 +83,8 @@ class ExplorerTotalRowMarkupTests(unittest.TestCase):
         # group, ad) and the footer alike, so they all keep the same column
         # count, order and formatting, including ga4-col. Its optional second
         # argument (a comparison-period aggregate) adds a vs-previous delta;
-        # the footer passes aggPrev, and so do campaign rows (matched into the
-        # comparison-window tree), while ad-group/ad rows omit it.
+        # the footer passes prevTreeTotals, and so do campaign rows (matched
+        # into the comparison-window tree), while ad-group/ad rows omit it.
         totals = _js_block(self.html, "function explorerTotals(")
         self.assertNotIn("METRIC_COLS", totals)
         cells = _js_block(self.html, "function metricCells(")

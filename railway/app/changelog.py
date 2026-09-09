@@ -62,6 +62,21 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-09",
+        title="Campaign explorer keeps its vs-previous number when you segment",
+        area="Client dashboards · Campaign explorer",
+        kind="fixed",
+        summary=(
+            "Picking a single conversion action, or turning on GA4-verified "
+            "conversions, used to drop the vs-previous-period percentage. Both "
+            "now show it, same as every other column."
+        ),
+        details=(
+            "GA4-verified conversions previously never showed a vs-previous "
+            "change at all, segmented or not — it does now.",
+        ),
+    ),
+    Entry(
         date="2026-09-08",
         title="LinkedIn Organic refreshes every night",
         area="Connectors · LinkedIn Organic",
