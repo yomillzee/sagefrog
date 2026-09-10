@@ -9,7 +9,20 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
+
+# Fixture days, relative to today rather than fixed.
+#
+# build_report keeps follower rows only from the reporting window's start
+# onwards — anything older contributes to the previous period instead — so a
+# hardcoded date silently drifts out of the window as time passes and the
+# window-derived totals (total_followers, follower_gain) start reading 0. These
+# fixtures used to say 2026-06-10, which sat exactly on the boundary of the
+# default window and fell off it a day later, turning green into red with no
+# code change. Two recent days are always inside it.
+_DAY_1 = (date.today() - timedelta(days=2)).isoformat()
+_DAY_2 = (date.today() - timedelta(days=1)).isoformat()
 
 APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
@@ -84,21 +97,21 @@ class BuildReportTests(unittest.TestCase):
 
         posts = [
             {"org_id": "777", "post_id": "1", "title": "Big post", "post_type": "video",
-             "published_at": "2026-06-10", "impressions": 500, "clicks": 10,
+             "published_at": _DAY_1, "impressions": 500, "clicks": 10,
              "likes": 20, "comments": 3, "shares": 2, "engagement_rate": 0.07},
             {"org_id": "777", "post_id": "2", "title": "Small post", "post_type": "text",
-             "published_at": "2026-06-11", "impressions": 100, "clicks": 1,
+             "published_at": _DAY_2, "impressions": 100, "clicks": 1,
              "likes": 5, "comments": 1, "shares": 0, "engagement_rate": 0.07},
         ]
         followers = [
-            {"metric_date": "2026-06-10", "organic_follower_gain": 5, "paid_follower_gain": 1,
+            {"metric_date": _DAY_1, "organic_follower_gain": 5, "paid_follower_gain": 1,
              "total_follower_gain": 6, "total_followers": 0},
-            {"metric_date": "2026-06-11", "organic_follower_gain": 4, "paid_follower_gain": 0,
+            {"metric_date": _DAY_2, "organic_follower_gain": 4, "paid_follower_gain": 0,
              "total_follower_gain": 4, "total_followers": 1200},
         ]
         pages = [
-            {"metric_date": "2026-06-10", "page_views": 40, "unique_visitors": 30},
-            {"metric_date": "2026-06-11", "page_views": 10, "unique_visitors": 8},
+            {"metric_date": _DAY_1, "page_views": 40, "unique_visitors": 30},
+            {"metric_date": _DAY_2, "page_views": 10, "unique_visitors": 8},
         ]
 
         calls = {"n": 0}
@@ -140,10 +153,10 @@ class BuildReportTests(unittest.TestCase):
 
         posts = [
             {"org_id": "777", "post_id": "1", "title": "Big post", "post_type": "video",
-             "published_at": "2026-06-10", "impressions": 500, "clicks": 10,
+             "published_at": _DAY_1, "impressions": 500, "clicks": 10,
              "likes": 20, "comments": 3, "shares": 2, "engagement_rate": 0.07},
             {"org_id": "777", "post_id": "2", "title": "Small post", "post_type": "text",
-             "published_at": "2026-06-11", "impressions": 100, "clicks": 1,
+             "published_at": _DAY_2, "impressions": 100, "clicks": 1,
              "likes": 5, "comments": 1, "shares": 0, "engagement_rate": 0.07},
         ]
         reach = [
@@ -159,7 +172,7 @@ class BuildReportTests(unittest.TestCase):
              "organic_followers": 4, "paid_followers": 0, "total_followers": 4},
         ]
         engagement = [
-            {"metric_date": "2026-06-10", "impressions": 400, "unique_impressions": 320,
+            {"metric_date": _DAY_1, "impressions": 400, "unique_impressions": 320,
              "clicks": 8, "likes": 15, "comments": 2, "shares": 3, "engagement_rate": 0.07},
         ]
         page_split = [{"desktop": 30, "mobile": 20, "careers_page_views": 12}]
@@ -183,7 +196,7 @@ class BuildReportTests(unittest.TestCase):
             if "sum(desktop_page_views" in low:
                 return page_split
             if "page_daily" in low:
-                return [{"metric_date": "2026-06-10", "page_views": 40, "unique_visitors": 30}]
+                return [{"metric_date": _DAY_1, "page_views": 40, "unique_visitors": 30}]
             return []
 
         svc.bigquery_service.run_query = fake_run_query  # type: ignore
@@ -242,7 +255,7 @@ class BuildReportTests(unittest.TestCase):
 
         listing = [
             {"org_id": "777", "post_id": str(i), "title": f"Post {i}", "post_type": "text",
-             "published_at": "2026-06-10", "impressions": 100, "clicks": 1,
+             "published_at": _DAY_1, "impressions": 100, "clicks": 1,
              "likes": 2, "comments": 1, "shares": 0, "engagement_rate": 0.05}
             for i in range(50)
         ]
@@ -303,7 +316,7 @@ class BuildReportTests(unittest.TestCase):
                 return []
             if "post_stats" in low:
                 return [{"org_id": "777", "post_id": "1", "title": "P", "post_type": "text",
-                         "published_at": "2026-06-10", "impressions": 900, "clicks": 20,
+                         "published_at": _DAY_1, "impressions": 900, "clicks": 20,
                          "likes": 40, "comments": 8, "shares": 3, "engagement_rate": 0.06}]
             return []
 
