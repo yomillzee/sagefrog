@@ -9,7 +9,10 @@
 # together.
 fastapi
 uvicorn[standard]
-google-ads
+# Held below 32: that release is a major bump of the library behind the Google
+# Ads connector, and our tests stub that API rather than exercising it, so a
+# breaking change would not surface in CI. Upgrade deliberately, on its own.
+google-ads<32
 pydantic
 python-dotenv
 httpx
