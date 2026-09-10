@@ -98,8 +98,8 @@ class DemographicFetchTests(unittest.TestCase):
 
     def test_static_taxonomies_resolve_without_an_api_call(self) -> None:
         api = FakeApi({"MEMBER_SENIORITY": [
-            _element("urn:li:seniority:8", 900, 12, costInUsd="120.5", conversions="2"),
-            _element("urn:li:seniority:6", 400, 5, costInUsd="60", conversions="1"),
+            _element("urn:li:seniority:8", 900, 12, costInUsd="120.5", externalWebsiteConversions="2"),
+            _element("urn:li:seniority:6", 400, 5, costInUsd="60", externalWebsiteConversions="1"),
         ]})
         rows = self._fetch(api, dimensions=["seniority"])
         self.assertEqual([r["category"] for r in rows], ["CXO", "Director"])
@@ -129,17 +129,35 @@ class DemographicFetchTests(unittest.TestCase):
         self.assertEqual(sorted(lookups), ["/titles/100", "/titles/200"])
 
     def test_projection_degrades_when_conversions_is_rejected(self) -> None:
+        # externalWebsiteConversions is in every conversion-bearing rung, so
+        # refusing it walks the ladder all the way down to the spend-only rung.
         api = FakeApi(
             {"MEMBER_INDUSTRY": [_element("urn:li:industry:96", 700, 7, costInUsd="55")]},
-            reject=("conversions",),
+            reject=("externalWebsiteConversions",),
         )
         rows = self._fetch(api, dimensions=["industry"])
         self.assertEqual(len(rows), 1)
-        # Spend survived the retry; conversions is None (refused), never 0.
+        # Spend survived the retries; conversions is None (refused), never 0.
         self.assertEqual(rows[0]["spend"], 55.0)
         self.assertIsNone(rows[0]["conversions"])
         analytics = [p for p in api.paths if p.startswith("/adAnalytics")]
-        self.assertEqual(len(analytics), 2)  # first attempt + degraded retry
+        self.assertEqual(len(analytics), 3)  # two rejected rungs + spend-only
+
+    def test_conversions_come_from_the_real_metric_names(self) -> None:
+        # The bug this pins: adAnalytics has no metric called "conversions", so
+        # asking for one got the whole projection rejected and every row was
+        # stored with 0. A demographic row must carry the real numbers.
+        api = FakeApi({"MEMBER_INDUSTRY": [
+            _element(
+                "urn:li:industry:96", 700, 7, costInUsd="55",
+                externalWebsiteConversions="4", oneClickLeads="2",
+            ),
+        ]})
+        rows = self._fetch(api, dimensions=["industry"])
+        self.assertEqual(rows[0]["conversions"], 6.0)
+        analytics = [p for p in api.paths if p.startswith("/adAnalytics")]
+        self.assertEqual(len(analytics), 1)  # accepted first time, no retry
+        self.assertNotIn("fields=impressions,clicks,costInUsd,conversions", analytics[0])
 
     def test_companies_resolve_in_one_batched_lookup(self) -> None:
         # /organizations/{id} requires the ADMINISTRATOR role on that org, which

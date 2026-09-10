@@ -62,6 +62,32 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-10",
+        title="LinkedIn campaigns report their conversions",
+        area="Client dashboards · Campaign Explorer",
+        kind="fixed",
+        summary=(
+            "The Conv. column was empty for every LinkedIn campaign, which read "
+            "as \"this campaign converted nobody\" when the real answer was that "
+            "we were never asking LinkedIn for the number. LinkedIn conversions "
+            "now appear alongside Google, Meta and Microsoft."
+        ),
+        details=(
+            "Website conversions and lead-form submissions are counted "
+            "together, the same way Campaign Manager totals them.",
+            "Conversion revenue, cost per conversion and the LinkedIn "
+            "conversion figures on the Overview and creative views fill in too.",
+            "Numbers appear after the next nightly sync, and backfill for a "
+            "client's full history once its window is re-synced.",
+            "If a LinkedIn account still shows no conversions, that account has "
+            "no conversion tracking set up in Campaign Manager — the portal is "
+            "now reporting what LinkedIn has.",
+            "The per-action selector in the column header still shows a dash "
+            "for LinkedIn: LinkedIn cannot report conversions broken down by "
+            "action and by campaign at the same time.",
+        ),
+    ),
+    Entry(
         date="2026-09-08",
         title="LinkedIn Organic refreshes every night",
         area="Connectors · LinkedIn Organic",

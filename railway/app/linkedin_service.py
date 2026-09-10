@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import re
+from collections.abc import Callable
 from datetime import date, timedelta, UTC
 from typing import Any
 from urllib.parse import quote
@@ -21,16 +22,103 @@ LINKEDIN_API_V2_BASE = "https://api.linkedin.com/v2"
 
 _log = logging.getLogger(__name__)
 
-_CONVERSION_FIELDS = (
-    "conversions",
+# adAnalytics has no metric named "conversions". Every projection here used to
+# ask for one, LinkedIn rejected the whole projection with a 400 naming it, and
+# the fallback dropped conversions entirely — so every row was stored with
+# conversions = 0 for every account, permanently and silently. These are the
+# real metric names.
+#
+# The set is deliberately non-overlapping: LinkedIn reports totals alongside
+# their own components, and summing both double counts.
+#   externalWebsiteConversions          total website conversions — already the
+#                                       sum of the postClick and postView
+#                                       variants, so those are NOT added.
+#   oneClickLeads                       lead form submissions. Note that
+#                                       oneClickLeadFormOpens is an open, not a
+#                                       conversion, and is excluded.
+#   leadGenerationMailContactInfoShares the Message Ads equivalent of a submit.
+# "opens" (an InMail open) was in the old tuple and is out for the same reason
+# as form opens: it is a view, and counting it inflated conversions for anyone
+# running Message Ads.
+_CONVERSION_FIELDS: tuple[str, ...] = (
     "externalWebsiteConversions",
-    "viralExternalWebsiteConversions",
-    "leadGenerationMailContactInfoShares",
-    "oneClickLeadFormOpens",
     "oneClickLeads",
-    "opens",
+    "leadGenerationMailContactInfoShares",
 )
 
+# Revenue attributed to those conversions. "conversionValueInUsd" is not an
+# adAnalytics metric either (the old projections asked for it alongside
+# "conversions" and it would have been rejected on its own merits); the API
+# reports value in the account's currency.
+_CONVERSION_VALUE_FIELDS: tuple[str, ...] = (
+    "conversionValueInLocalCurrency",
+)
+
+# LinkedIn signals "you asked for a metric this pivot doesn't support" with a
+# message naming the projected field. Matching on that (rather than on any 400)
+# keeps a genuine auth/permission failure from being silently retried away — a
+# missing scope or product comes back as 403 ACCESS_DENIED, not as this.
+_PROJECTION_REJECTED = "projected field"
+
+
+def _is_projection_rejection(error: Exception) -> bool:
+    return _PROJECTION_REJECTED in str(error).lower()
+
+
+def _projection_ladder(base_fields: str) -> tuple[str, ...]:
+    """Projections to try for an analytics read, most complete first.
+
+    LinkedIn rejects an entire projection when one metric isn't available for
+    the pivot rather than returning that metric empty, and exactly which metrics
+    are unavailable varies by pivot, account and API version. Rather than
+    hardcode a guess: ask for everything, and on a projection rejection drop the
+    most expendable field and retry. ``base_fields`` — impressions/clicks/cost
+    plus whatever dimensions the pivot needs — is the floor; if that is rejected
+    the error is real and propagates.
+    """
+    conversions = ",".join(_CONVERSION_FIELDS)
+    values = ",".join(_CONVERSION_VALUE_FIELDS)
+    return (
+        f"{base_fields},{conversions},{values}",
+        f"{base_fields},{conversions}",
+        f"{base_fields},{_CONVERSION_FIELDS[0]}",
+        base_fields,
+    )
+
+
+def _fetch_analytics_rows(
+    url_for: Callable[[str], str],
+    *,
+    base_fields: str,
+    access_token: str,
+    env: LinkedInEnv | None,
+    what: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Analytics elements, plus whether the accepted projection had conversions.
+
+    ``url_for`` builds the request URL from a projection string. A False second
+    element means "LinkedIn would not report conversions for this pivot", which
+    callers must render as unknown rather than as zero.
+    """
+    last_rejection: Exception | None = None
+    for fields in _projection_ladder(base_fields):
+        try:
+            payload = _linkedin_get(url_for(fields), access_token=access_token, env=env)
+        except Exception as exc:
+            if not _is_projection_rejection(exc):
+                raise
+            last_rejection = exc
+            continue
+        has_conversions = fields != base_fields
+        if not has_conversions:
+            _log.warning(
+                "LinkedIn %s: no conversion metric accepted, reporting none. "
+                "Last rejection: %s",
+                what,
+                str(last_rejection)[:300],
+            )
+        return payload.get("elements") or [], has_conversions
+    raise last_rejection or RuntimeError(f"LinkedIn {what}: no projection accepted")
 
 
 def _normalize_account_id(account_id: str) -> str:
@@ -57,6 +145,9 @@ def _parse_conversions(record: dict[str, Any]) -> float:
 
 
 def _parse_conversion_value(record: dict[str, Any]) -> float:
+    for key in _CONVERSION_VALUE_FIELDS:
+        if record.get(key):
+            return float(record[key])
     return float(record.get("conversionValueInUsd") or record.get("conversionValue") or 0)
 
 
@@ -985,46 +1076,27 @@ def _fetch_analytics(
     env: LinkedInEnv,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Load adAnalytics for ACCOUNT or CAMPAIGN pivot (conversions field optional)."""
-    with_conversions = _analytics_url(
-        pivot=pivot,
-        account_id=account_id,
-        start=start,
-        end=end,
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues",
-    )
-    fallback = _analytics_url(
-        pivot=pivot,
-        account_id=account_id,
-        start=start,
-        end=end,
-        fields="impressions,clicks,costInUsd,pivotValues",
-    )
-    if pivot == "ACCOUNT":
-        # Account pivot does not use pivotValues in the same way.
-        with_conversions = _analytics_url(
+    # The account pivot does not use pivotValues in the same way.
+    base_fields = "impressions,clicks,costInUsd"
+    if pivot != "ACCOUNT":
+        base_fields += ",pivotValues"
+
+    def url_for(fields: str) -> str:
+        return _analytics_url(
             pivot=pivot,
             account_id=account_id,
             start=start,
             end=end,
-            fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd",
-        )
-        fallback = _analytics_url(
-            pivot=pivot,
-            account_id=account_id,
-            start=start,
-            end=end,
-            fields="impressions,clicks,costInUsd",
+            fields=fields,
         )
 
-    try:
-        payload = _linkedin_get(with_conversions, access_token=access_token, env=env)
-        return payload.get("elements") or [], True
-    except Exception as primary_error:
-        msg = str(primary_error)
-        if 'Projected field "conversions"' not in msg:
-            raise
-        payload = _linkedin_get(fallback, access_token=access_token, env=env)
-        return payload.get("elements") or [], False
+    return _fetch_analytics_rows(
+        url_for,
+        base_fields=base_fields,
+        access_token=access_token,
+        env=env,
+        what=f"{pivot} analytics",
+    )
 
 
 def fetch_daily_metrics(
@@ -1040,39 +1112,26 @@ def fetch_daily_metrics(
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
-    # Two-URL fallback for conversions only.
-    _url_with_conv = _analytics_url(
-        pivot="ACCOUNT",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,dateRange",
-    )
-    _url_safe = _analytics_url(
-        pivot="ACCOUNT",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,dateRange",
-    )
+    def url_for(fields: str) -> str:
+        return _analytics_url(
+            pivot="ACCOUNT",
+            account_id=account_id_clean,
+            start=start,
+            end=end,
+            time_granularity="DAILY",
+            fields=fields,
+        )
 
-    _LI_CONV_ERR = 'Projected field "conversions"'
-    conversion_ok = False
-
-    try:
-        payload = _linkedin_get(_url_with_conv, access_token=access_token, env=env)
-        conversion_ok = True
-    except Exception as _e1:
-        if _LI_CONV_ERR in str(_e1):
-            _log.warning("LinkedIn daily: conversions rejected, retrying without")
-            payload = _linkedin_get(_url_safe, access_token=access_token, env=env)
-        else:
-            raise
+    elements, conversion_ok = _fetch_analytics_rows(
+        url_for,
+        base_fields="impressions,clicks,costInUsd,dateRange",
+        access_token=access_token,
+        env=env,
+        what="account daily",
+    )
 
     by_date: dict[str, dict[str, Any]] = {}
-    for row in payload.get("elements") or []:
+    for row in elements:
         metric_day = _date_from_analytics_row(row)
         if not metric_day:
             continue
@@ -1130,35 +1189,26 @@ def fetch_campaign_daily_metrics(
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
-    _LI_CONV_ERR = 'Projected field "conversions"'
-    url_with_conv = _analytics_url(
-        pivot="CAMPAIGN",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues,dateRange",
+    def url_for(fields: str) -> str:
+        return _analytics_url(
+            pivot="CAMPAIGN",
+            account_id=account_id_clean,
+            start=start,
+            end=end,
+            time_granularity="DAILY",
+            fields=fields,
+        )
+
+    elements, conversion_ok = _fetch_analytics_rows(
+        url_for,
+        base_fields="impressions,clicks,costInUsd,pivotValues,dateRange",
+        access_token=access_token,
+        env=env,
+        what="campaign daily",
     )
-    url_safe = _analytics_url(
-        pivot="CAMPAIGN",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,pivotValues,dateRange",
-    )
-    conversion_ok = False
-    try:
-        payload = _linkedin_get(url_with_conv, access_token=access_token, env=env)
-        conversion_ok = True
-    except Exception as _e:
-        if _LI_CONV_ERR in str(_e):
-            payload = _linkedin_get(url_safe, access_token=access_token, env=env)
-        else:
-            raise
 
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in payload.get("elements") or []:
+    for row in elements:
         day = _date_from_analytics_row(row)
         if not day:
             continue
@@ -1209,35 +1259,26 @@ def fetch_creative_daily_metrics(
     access_token = access_token or refresh_access_token(env)["access_token"]
     account_id_clean = _normalize_account_id(account_id)
 
-    _LI_CONV_ERR = 'Projected field "conversions"'
-    url_with_conv = _analytics_url(
-        pivot="CREATIVE",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,conversions,conversionValueInUsd,pivotValues,dateRange",
+    def url_for(fields: str) -> str:
+        return _analytics_url(
+            pivot="CREATIVE",
+            account_id=account_id_clean,
+            start=start,
+            end=end,
+            time_granularity="DAILY",
+            fields=fields,
+        )
+
+    elements, conversion_ok = _fetch_analytics_rows(
+        url_for,
+        base_fields="impressions,clicks,costInUsd,pivotValues,dateRange",
+        access_token=access_token,
+        env=env,
+        what="creative daily",
     )
-    url_safe = _analytics_url(
-        pivot="CREATIVE",
-        account_id=account_id_clean,
-        start=start,
-        end=end,
-        time_granularity="DAILY",
-        fields="impressions,clicks,costInUsd,pivotValues,dateRange",
-    )
-    conversion_ok = False
-    try:
-        payload = _linkedin_get(url_with_conv, access_token=access_token, env=env)
-        conversion_ok = True
-    except Exception as _e:
-        if _LI_CONV_ERR in str(_e):
-            payload = _linkedin_get(url_safe, access_token=access_token, env=env)
-        else:
-            raise
 
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in payload.get("elements") or []:
+    for row in elements:
         day = _date_from_analytics_row(row)
         if not day:
             continue
@@ -2636,29 +2677,18 @@ DEMOGRAPHIC_LABELS: dict[str, str] = {
     "company_size": "Company size",
 }
 
-# Field sets tried in order, most complete first. LinkedIn rejects a projection
-# outright (400) when a metric isn't available for the pivot rather than
-# returning it empty, and exactly which metrics are unavailable varies by pivot
-# and API version — conversionValueInUsd is documented as unavailable for
-# demographic pivots, and conversions is inconsistent across accounts. Rather
-# than hardcode a guess, degrade: ask for everything, and on a projection
-# rejection drop the most expendable field and retry. Impressions + clicks are
-# the floor; if that fails the error is real and propagates.
+# Field sets tried in order, most complete first — the same degrade-on-rejection
+# approach as _projection_ladder (see the note there), with two extra rungs
+# because a demographic pivot supports even less than a campaign one: conversion
+# value is documented as unavailable here, and which conversion metrics are
+# accepted is inconsistent across accounts. Impressions + clicks are the floor;
+# if that fails the error is real and propagates.
 _DEMOGRAPHIC_FIELD_SETS: tuple[str, ...] = (
-    "impressions,clicks,costInUsd,conversions,pivotValues",
+    f"impressions,clicks,costInUsd,{','.join(_CONVERSION_FIELDS)},pivotValues",
+    f"impressions,clicks,costInUsd,{_CONVERSION_FIELDS[0]},pivotValues",
     "impressions,clicks,costInUsd,pivotValues",
     "impressions,clicks,pivotValues",
 )
-
-# LinkedIn signals "you asked for a metric this pivot doesn't support" with a
-# message naming the projected field. Matching on that (rather than on any 400)
-# keeps a genuine auth/permission failure from being silently retried away.
-_PROJECTION_REJECTED = "projected field"
-
-
-def _is_projection_rejection(error: Exception) -> bool:
-    return _PROJECTION_REJECTED in str(error).lower()
-
 
 def _demographic_urn_id(urn: str) -> str:
     """Trailing id of a pivot URN. Non-URN pivot values pass through unchanged.
@@ -2906,7 +2936,9 @@ def fetch_ads_demographics(
             continue
 
         has_spend = "costInUsd" in fields_used
-        has_conversions = "conversions" in fields_used
+        # Which conversion metric survived the ladder varies, so ask the
+        # projection itself rather than substring-matching one field name.
+        has_conversions = any(f in fields_used for f in _CONVERSION_FIELDS)
         dim_rows: list[dict[str, Any]] = []
         for element in elements:
             raw_value = _first_pivot_value(element)
@@ -2916,9 +2948,7 @@ def fetch_ads_demographics(
             clicks = int(float(element.get("clicks") or 0))
             # costInUsd comes back as a string, not a number.
             spend = float(element.get("costInUsd") or 0) if has_spend else None
-            conversions = (
-                float(element.get("conversions") or 0) if has_conversions else None
-            )
+            conversions = _parse_conversions(element) if has_conversions else None
             if impressions <= 0 and clicks <= 0:
                 continue
             dim_rows.append({
