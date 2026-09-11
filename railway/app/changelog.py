@@ -62,6 +62,19 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-11",
+        title="LinkedIn's account picker now shows every account, not just the first page",
+        area="Connectors · LinkedIn Ads",
+        kind="fixed",
+        summary=(
+            "Authorizing LinkedIn only ever listed the first page of ad "
+            "accounts LinkedIn returned, so an account past that page never "
+            "showed up in the connector's select list even with correct "
+            "access. The picker now follows LinkedIn's pagination and lists "
+            "every account you have access to."
+        ),
+    ),
+    Entry(
         date="2026-09-10",
         title="LinkedIn campaigns report their conversions",
         area="Client dashboards · Campaign Explorer",

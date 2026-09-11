@@ -396,12 +396,14 @@ def list_ad_accounts(
     env = env or load_linkedin_env(require_token=access_token is None)
     access_token = access_token or refresh_access_token(env)["access_token"]
     try:
-        payload = _linkedin_get("/adAccounts", params={"q": "search"}, access_token=access_token, env=env)
+        rows = _linkedin_get_all_elements(
+            "/adAccounts", params={"q": "search"}, access_token=access_token, env=env
+        )
     except Exception:
-        payload = _linkedin_get("/adAccounts", access_token=access_token, env=env)
+        rows = _linkedin_get_all_elements("/adAccounts", access_token=access_token, env=env)
 
     accounts: list[dict[str, Any]] = []
-    for row in payload.get("elements") or []:
+    for row in rows:
         account_id = _normalize_account_id(str(row.get("id") or ""))
         accounts.append(
             {
