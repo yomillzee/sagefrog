@@ -164,7 +164,15 @@ def _format_date_range(start: date, end: date) -> str:
     )
 
 
-_LINKEDIN_VERSION_FALLBACKS = ("202509", "202604", "202401", "202309")
+# Rungs tried after the configured version, oldest first — so an endpoint a
+# newer version dropped is still reached before one only newer versions have.
+# Every rung must be a version LinkedIn still supports: a sunset rung is not a
+# fallback, it is a second failure. This list used to end on 202401 and 202309,
+# both sunset well over a year ago, and to lead with 202509, which sunset on
+# 2026-09-15. tests/test_linkedin_api_version.py fails once any rung nears its
+# own sunset, which is the only warning this repo gets — no connector sync
+# failure alerts anyone today.
+_LINKEDIN_VERSION_FALLBACKS = ("202604", "202606", "202608")
 
 
 def _client_headers(
@@ -197,9 +205,40 @@ def _version_candidates(env: LinkedInEnv) -> list[str]:
     return ordered
 
 
-def _is_version_resource_not_found(exc: Exception) -> bool:
+_API_ERROR_STATUS_RE = re.compile(r"LinkedIn API error (\d{3})\b")
+
+
+def _error_status(exc: Exception) -> int | None:
+    """HTTP status out of the message _linkedin_get raises, when it is one."""
+    match = _API_ERROR_STATUS_RE.search(str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _is_version_rejected(exc: Exception) -> bool:
+    """Is this failure worth retrying on a different Linkedin-Version?
+
+    Two shapes, and the second is the reason this is not just a 404 check. An
+    endpoint absent from the requested version answers 404 RESOURCE_NOT_FOUND —
+    that is the one this always handled. But a version LinkedIn has *sunset*
+    rejects every call with 426 Upgrade Required, and reading only the 404 meant
+    a sunset version took the whole sync down with a hard error rather than
+    stepping to the next rung. The status is read out of the structured message
+    rather than matched loosely, so an account id that happens to contain "404"
+    cannot masquerade as one.
+    """
     msg = str(exc)
-    return "404" in msg and ("RESOURCE_NOT_FOUND" in msg or "No virtual resource" in msg)
+    status = _error_status(exc)
+    if (status == 404 or (status is None and "404" in msg)) and (
+        "RESOURCE_NOT_FOUND" in msg or "No virtual resource" in msg
+    ):
+        return True
+    if status == 426:
+        return True
+    lowered = msg.lower()
+    return any(
+        hint in lowered
+        for hint in ("upgrade required", "unsupported version", "version is not supported")
+    )
 
 
 def _linkedin_get(
@@ -259,7 +298,7 @@ def _linkedin_get_with_versions(
             )
         except Exception as exc:
             last_error = exc
-            if _is_version_resource_not_found(exc):
+            if _is_version_rejected(exc):
                 continue
             raise
     if last_error:
@@ -293,7 +332,7 @@ def _reference_data_get(
             path, access_token=access_token, env=env, base=LINKEDIN_API_V2_BASE
         )
     except Exception as exc:
-        if "404" in str(exc) and not _is_version_resource_not_found(exc):
+        if "404" in str(exc) and not _is_version_rejected(exc):
             raise
         return _linkedin_get_with_versions(path, access_token=access_token, env=env)
 
@@ -343,7 +382,12 @@ def resolve_client_access_token(client_slug: str) -> str | None:
         return None
     try:
         import oauth_store
-        from linkedin_auth import _ENV_ALIASES, _get_env, _get_required_env
+        from linkedin_auth import (
+            resolve_version,
+            _ENV_ALIASES,
+            _get_env,
+            _get_required_env,
+        )
 
         refresh = oauth_store.get_refresh_token("linkedin", client_slug=client_slug)
         if not refresh:
@@ -352,7 +396,7 @@ def resolve_client_access_token(client_slug: str) -> str | None:
             client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
             client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
             refresh_token=refresh,
-            version=_get_env(*_ENV_ALIASES["version"]) or "202509",
+            version=resolve_version(_get_env(*_ENV_ALIASES["version"])),
         )
         return refresh_access_token(env)["access_token"]
     except Exception:

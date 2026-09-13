@@ -2,9 +2,72 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
+from datetime import date
 
 log = logging.getLogger(__name__)
+
+# LinkedIn publishes a new Marketing API version every month and supports each
+# one for a year from release, so an unset LINKEDIN_VERSION is not a neutral
+# default — it is a dated one with a sunset baked in. This sat at 202509, which
+# LinkedIn sunset on 2026-09-15; because nothing alerts on a failed connector
+# sync, the first sign would have been a client asking why their LinkedIn
+# numbers stopped moving. Keep this on a version the code has actually been
+# exercised against (see the adCampaigns note in
+# linkedin_service.account_performance) and move it before its own sunset —
+# tests/test_linkedin_api_version.py goes red while there is still time to.
+DEFAULT_LINKEDIN_VERSION = "202604"
+
+_VERSION_RE = re.compile(r"^20\d{4}$")
+
+
+def version_sunset_date(version: str | None) -> date | None:
+    """The day LinkedIn stops serving ``version``, read off the string itself.
+
+    A version is ``YYYYMM`` and is supported for "a minimum of one year";
+    LinkedIn sunsets mid-month a year on (202509 went on 2026-09-15, 202510 on
+    2026-10-15). This rounds down to the 1st so the estimate lands early rather
+    than late — erring the other way would mean calling a dead version live.
+    Returns None for anything that is not a ``YYYYMM`` version, which is left
+    alone rather than second-guessed.
+    """
+    candidate = (version or "").strip()
+    if not _VERSION_RE.match(candidate):
+        return None
+    year, month = int(candidate[:4]), int(candidate[4:])
+    if not 1 <= month <= 12:
+        return None
+    return date(year + 1, month, 1)
+
+
+def resolve_version(configured: str | None) -> str:
+    """The Linkedin-Version to send: what is configured, unless it is dead.
+
+    LINKEDIN_VERSION is set once in Railway and then nobody looks at it again,
+    so it outlives the version it names — ours said 202509, which LinkedIn
+    sunset on 2026-09-15. A sunset version does not degrade, it rejects every
+    call with 426, and while the fallback ladder in linkedin_service now steps
+    past that, plenty of calls go straight through ``_linkedin_get`` and would
+    simply fail. Preferring the app's default over a version known to be dead
+    keeps those working; the warning is there so the stale variable still gets
+    cleaned up rather than quietly papered over forever.
+    """
+    candidate = (configured or "").strip()
+    if not candidate:
+        return DEFAULT_LINKEDIN_VERSION
+    sunset = version_sunset_date(candidate)
+    if sunset is not None and sunset <= date.today():
+        log.warning(
+            "LINKEDIN_VERSION=%s was sunset by LinkedIn around %s; sending %s instead. "
+            "Update or unset LINKEDIN_VERSION.",
+            candidate,
+            sunset,
+            DEFAULT_LINKEDIN_VERSION,
+        )
+        return DEFAULT_LINKEDIN_VERSION
+    return candidate
+
 
 _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "client_id": ("LINKEDIN_CLIENT_ID",),
@@ -66,7 +129,7 @@ def load_linkedin_env(*, require_token: bool = True) -> LinkedInEnv:
         client_id=_get_required_env(*_ENV_ALIASES["client_id"]),
         client_secret=_get_required_env(*_ENV_ALIASES["client_secret"]),
         refresh_token=_resolve_refresh_token(required=require_token),
-        version=_get_env(*_ENV_ALIASES["version"]) or "202509",
+        version=resolve_version(_get_env(*_ENV_ALIASES["version"])),
     )
 
 
@@ -104,7 +167,7 @@ def env_summary() -> dict:
         "has_client_id": bool(_get_env(*_ENV_ALIASES["client_id"])),
         "has_client_secret": bool(_get_env(*_ENV_ALIASES["client_secret"])),
         "has_refresh_token": has_refresh,
-        "linkedin_version": _get_env(*_ENV_ALIASES["version"]) or "202509",
+        "linkedin_version": resolve_version(_get_env(*_ENV_ALIASES["version"])),
         "refresh_token_stored": has_refresh,
     }
 

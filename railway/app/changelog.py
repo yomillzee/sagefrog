@@ -62,6 +62,27 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-13",
+        title="Google Business Profile refreshes overnight like everything else",
+        area="Connectors · Google Business Profile",
+        kind="fixed",
+        summary=(
+            "Google Business Profile was the one connected source the nightly "
+            "refresh skipped, so its listing performance and reviews only moved "
+            "when someone opened the connector and clicked \"Run sync now\" — a "
+            "dashboard could sit on weeks-old profile data while every other "
+            "source was current. It now runs every night, and its card reads "
+            "Daily instead of Manual only."
+        ),
+        details=(
+            "Nothing to do — already-connected clients are picked up on the next "
+            "nightly run.",
+            "If a client's Google Business Profile API access is still pending "
+            "approval, their connector shows that setup message rather than "
+            "failing quietly.",
+        ),
+    ),
+    Entry(
         date="2026-09-11",
         title="LinkedIn's account picker now shows every account, not just the first page",
         area="Connectors · LinkedIn Ads",

@@ -111,7 +111,13 @@ def needs_scope_reauth(client_slug: str) -> bool:
 def _get_access_token(client_slug: str) -> str:
     import oauth_store
     import linkedin_service
-    from linkedin_auth import LinkedInEnv, _get_required_env, _get_env, _ORGANIC_ENV_ALIASES
+    from linkedin_auth import (
+        resolve_version,
+        LinkedInEnv,
+        _get_required_env,
+        _get_env,
+        _ORGANIC_ENV_ALIASES,
+    )
 
     refresh = oauth_store.get_refresh_token("linkedin_organic", client_slug=client_slug)
     if not refresh:
@@ -128,7 +134,7 @@ def _get_access_token(client_slug: str) -> str:
         client_id=_get_required_env(*_ORGANIC_ENV_ALIASES["client_id"]),
         client_secret=_get_required_env(*_ORGANIC_ENV_ALIASES["client_secret"]),
         refresh_token=refresh,
-        version=_get_env(*_ORGANIC_ENV_ALIASES["version"]) or "202509",
+        version=resolve_version(_get_env(*_ORGANIC_ENV_ALIASES["version"])),
     )
     data = linkedin_service.refresh_access_token(env)
     return data["access_token"]

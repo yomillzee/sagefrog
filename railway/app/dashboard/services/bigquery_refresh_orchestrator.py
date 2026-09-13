@@ -30,7 +30,7 @@ def ingestion_window(trigger: str, *, today: date | None = None) -> tuple[date, 
 # must have cron_synced = True on its handler — tests/test_sync_cadence.py holds
 # the two in step so the Connectors page can't advertise a cadence this list
 # doesn't honour.
-_SYNC_CONNECTORS = ["ga4", "google_ads", "meta_ads", "linkedin_ads", "linkedin_organic", "microsoft_ads", "gsc", "hubspot", "semrush", "pagespeed", "bluesky"]
+_SYNC_CONNECTORS = ["ga4", "google_ads", "google_business", "meta_ads", "linkedin_ads", "linkedin_organic", "microsoft_ads", "gsc", "hubspot", "semrush", "pagespeed", "bluesky"]
 
 
 def _trigger_date_range(trigger: str) -> str:
