@@ -31,11 +31,14 @@ class GoogleBusinessConnector(ConnectorHandler):
     display_name = "Google Business Profile"
     oauth_platform = "google_business"
     default_raw_dataset = "raw_google_business"
-    # Not in the daily refresh's connector list (bigquery_refresh_orchestrator
-    # ._SYNC_CONNECTORS), so nothing syncs this on a schedule today — profile
-    # data lands only on an explicit "Run sync now". Flagged here so the
-    # Connectors page says so out loud instead of implying a nightly cadence.
-    cron_synced = False
+    # In the daily refresh (bigquery_refresh_orchestrator._SYNC_CONNECTORS) like
+    # every other BQ-backed source. It sat outside that list from the day it was
+    # built, so profile data moved only when someone clicked "Run sync now" —
+    # the same omission LinkedIn Organic had. A client whose Cloud project is
+    # still waiting on Google's Business Profile access approval fails the step
+    # with the setup message from google_business_service._is_access_not_approved
+    # rather than the rest of the refresh, which is a better answer than data
+    # that silently never moves.
 
     def list_accounts(self, *, client_slug: str) -> list[dict[str, Any]]:
         refresh_token = oauth_store.get_refresh_token(
