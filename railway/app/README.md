@@ -147,7 +147,8 @@ Set these in Railway (same names as `help/linkedin-ads-dashboard`):
 - `LINKEDIN_CLIENT_ID`
 - `LINKEDIN_CLIENT_SECRET`
 - `LINKEDIN_REFRESH_TOKEN` — long-lived refresh token from the LinkedIn OAuth flow (scopes: `r_ads`, `r_ads_reporting`)
-- `LINKEDIN_VERSION` (optional, default `202604`) — sent as the `Linkedin-Version` header
+- `LINKEDIN_VERSION` (optional, default `202604`) — sent as the `Linkedin-Version` header.
+  LinkedIn supports each monthly version for a year, so the default has a sunset date (`202604` → ~2027-04-15) and is not a set-and-forget value. `tests/test_linkedin_api_version.py` fails while there is still time to move it.
 
 Mint a refresh token locally with the dashboard (`npm start` → Settings → Connect LinkedIn), or run your OAuth callback once and copy `refresh_token` into Railway.
 

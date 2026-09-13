@@ -35,7 +35,7 @@ class SyncCadenceTests(unittest.TestCase):
         self.assertEqual(handlers["semrush"].sync_cadence()[0], "Monthly")
         self.assertEqual(handlers["linkedin_organic"].sync_cadence()[0], "Daily")
         self.assertEqual(handlers["gtm"].sync_cadence()[0], "Manual only")
-        self.assertEqual(handlers["google_business"].sync_cadence()[0], "Manual only")
+        self.assertEqual(handlers["google_business"].sync_cadence()[0], "Daily")
 
 
 if __name__ == "__main__":
