@@ -7,6 +7,7 @@ from datetime import date
 
 import dashboard_theme
 
+from dashboard.assets import shell_css_url
 from dashboard.utils.formatting import esc as _esc
 from dashboard.utils.urls import (
     bluesky_page_url as _bluesky_page_url,
@@ -1585,6 +1586,17 @@ def render_sidebar(
     <script>(function(){{try{{if(localStorage.getItem('sf_sidebar_collapsed')==='1'){{var s=document.currentScript.closest('.app-shell');if(s)s.classList.add('sidebar-collapsed');}}}}catch(e){{}}}})();</script>"""
 
 
+def _page_css_block(extra_css: str) -> str:
+    """A page's own CSS as its own ``<style>`` block, or nothing if it has none.
+
+    The shared chrome is a ``<link>`` now, and a stylesheet cannot be spliced
+    into the middle of an inline block — so a page's own rules move to a second
+    block *after* that link. Document order is what the cascade reads, so this
+    resolves exactly as the single block did: tokens, chrome, then page.
+    """
+    return f"<style>{extra_css}</style>" if extra_css.strip() else ""
+
+
 def render_client_shell_page(
     *,
     client_slug: str,
@@ -1652,6 +1664,7 @@ def render_client_shell_page(
             access_key=access_key,
             use_session=use_session,
         )
+    extra_css_block = _page_css_block(extra_css)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1670,9 +1683,12 @@ def render_client_shell_page(
     .dash-content {{ flex: 1; width: 100%; padding: 28px 32px 48px; }}
     .wrap {{ width: 100%; max-width: none; min-width: 0; }}
     @media (max-width: 720px) {{ .dash-content {{ padding: 18px 16px 40px; }} }}
-    {SIDEBAR_CSS}
-    {extra_css}
   </style>
+  <!-- The shared sidebar/footer chrome, cached for a year. It sits here, between
+       this page's tokens and its own CSS, because that is where it sat when it
+       was inlined — see dashboard/assets.py. -->
+  <link rel="stylesheet" href="{shell_css_url()}">
+  {extra_css_block}
 </head>
 <body>
   <div class="app-shell">
@@ -2041,6 +2057,7 @@ def render_admin_shell_page(
         ),
         admin_context=True,
     )
+    extra_css_block = _page_css_block(extra_css)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2054,9 +2071,9 @@ def render_admin_shell_page(
       background: var(--bg, #eef2f7); color: var(--ink, #0f1c2e); line-height: 1.5; -webkit-font-smoothing: antialiased; }}
     .app-shell {{ display: flex; flex-direction: row; min-height: 100vh; }}
     .dash-main {{ flex: 1; min-width: 0; display: flex; flex-direction: column; width: 100%; }}
-    {SIDEBAR_CSS}
-    {extra_css}
   </style>
+  <link rel="stylesheet" href="{shell_css_url()}">
+  {extra_css_block}
 </head>
 <body>
   <div class="app-shell">
@@ -2291,6 +2308,10 @@ DASH_TOPBAR_CSS = """
 """
 
 
+# The shared chrome. Pages do not inline this any more — it is hashed and served
+# from /assets/shell-<digest>.css (see dashboard/assets.py), which is why the
+# shell renderers link it rather than interpolating it. Edit it here; the digest
+# and every page's link follow on the next deploy.
 SIDEBAR_CSS = """
     /* ====== Navy drawer sidebar ====== */
     .dash-sidebar {

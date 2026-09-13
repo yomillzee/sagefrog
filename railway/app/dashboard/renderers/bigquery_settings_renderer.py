@@ -10,8 +10,8 @@ page's sidebar + helpers so it stays import-light and previewable offline via
 
 from __future__ import annotations
 
+from dashboard.assets import shell_css_url
 from dashboard.renderers.base_layout import (
-    SIDEBAR_CSS,
     admin_top_tabs_html,
     dashboard_topbar_js,
     favicon_head_html,
@@ -366,13 +366,16 @@ def render_bigquery_settings_page(
     :root {{ --bg:#eef2f7; --card:#fff; --line:#e2e8f0; --line-soft:#eff3f8; --navy:#0a2540; --accent:#1d6fd0; --muted:#6b7a90; --bad:#b42318; --ok:#0a7f3f; --sidebar-from:#0a2540; --sidebar-to:#123456; --radius:14px; --radius-sm:9px; --shadow:0 1px 2px rgba(16,33,67,.04), 0 4px 16px rgba(16,33,67,.05); }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#102033; -webkit-font-smoothing:antialiased; }}
-    /* SIDEBAR_CSS (shared) covers .dash-sidebar* only — the flex-container
-       rules that lay the sidebar and content side by side normally live in
-       render_client_shell_page's own style block, which this standalone page
-       doesn't use, so they're declared explicitly here instead. */
+    /* The shared chrome (linked below) covers .dash-sidebar* only — the
+       flex-container rules that lay the sidebar and content side by side
+       normally live in render_client_shell_page's own style block, which this
+       standalone page doesn't use, so they're declared explicitly here. */
     .app-shell {{ display: flex; flex-direction: row; min-height: 100vh; }}
     .dash-main {{ flex: 1 1 auto; min-width: 0; }}
-    {SIDEBAR_CSS}
+  </style>
+  <!-- Same cached chrome every other page links; see dashboard/assets.py. -->
+  <link rel="stylesheet" href="{shell_css_url()}">
+  <style>
     .debug-only {{ display:none; }} .is-admin .debug-only {{ display:block; }}
     main {{ max-width:1000px; margin:0 auto; padding:30px 28px 56px; }}
     .page-head {{ margin-bottom:24px; }}

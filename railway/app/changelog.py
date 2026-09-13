@@ -63,6 +63,30 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-13",
+        title="The rest of the portal loads faster too, not just dashboards",
+        area="Client dashboards · Admin",
+        kind="improved",
+        summary=(
+            "The sidebar and footer styling now downloads once and is reused "
+            "on every page, instead of riding inside each one. Settings, "
+            "Connectors, Client Hours, Benchmarks, Trends, Email Performance, "
+            "Files, Docs and the admin pages all get smaller — a fifth on the "
+            "busiest of them, more than half on the lightest — so clicking "
+            "between them is quicker."
+        ),
+        details=(
+            "Nothing about how any page looks or behaves has changed.",
+            "Client dashboards got this a week ago; this extends it to every "
+            "other page in the portal.",
+            "The same styling is now shared across pages, so the saving is "
+            "biggest when opening several pages in a row, and on phones and "
+            "slow connections.",
+            "If a page ever loads without its sidebar styling, it means that "
+            "file did not download — a refresh will fix it.",
+        ),
+    ),
+    Entry(
+        date="2026-09-13",
         title="Google Business Profile refreshes overnight like everything else",
         area="Connectors · Google Business Profile",
         kind="fixed",
