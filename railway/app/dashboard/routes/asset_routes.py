@@ -1,4 +1,4 @@
-"""Composed dashboard stylesheets, served with far-future caching.
+"""Composed stylesheets and scripts, served with far-future caching.
 
 Separate from the ``/static`` mount because the body is stitched together at
 runtime from ``.css`` files *and* Python constants shared with other renderers
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response
 
-from dashboard.assets import dashboard_css, dashboard_js
+from dashboard.assets import dashboard_css, dashboard_js, shell_css
 
 router = APIRouter(include_in_schema=False)
 
@@ -40,6 +40,16 @@ def dashboard_stylesheet(digest: str) -> Response:
 def dashboard_script(digest: str) -> Response:
     """Serve the composed dashboard JS. Same stale-digest rule as the CSS."""
     return _asset_response(*dashboard_js(), media_type="text/javascript; charset=utf-8")
+
+
+@router.get("/assets/shell-{digest}.css")
+def shell_stylesheet(digest: str) -> Response:
+    """Serve the shared shell chrome, linked by every non-dashboard page.
+
+    Its own URL rather than part of the dashboard bundle: these pages need the
+    sidebar CSS and nothing else the dashboard carries. Same stale-digest rule.
+    """
+    return _asset_response(*shell_css(), media_type="text/css; charset=utf-8")
 
 
 def _asset_response(current: str, body: str, *, media_type: str) -> Response:

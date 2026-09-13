@@ -1,4 +1,7 @@
-"""Composed, content-hashed stylesheets for the shared dashboard template.
+"""Composed, content-hashed CSS and JS, served from cacheable digest URLs.
+
+Two bundles live here: the dashboard's own stylesheet and script, and the shell
+chrome every other page shares (see the sections below).
 
 The dashboard's CSS used to live inside ``render_bigquery_dashboard_page``'s
 f-string as a ~960-line ``<style>`` block. That cost us three things:
@@ -118,6 +121,44 @@ def dashboard_css() -> tuple[str, str]:
 def dashboard_css_url() -> str:
     """Cache-busting URL for the composed stylesheet."""
     return f"/assets/dashboard-{dashboard_css()[0]}.css"
+
+
+# ── Shared shell chrome ─────────────────────────────────────────────────────
+# The same story one level out. Every page that is *not* the dashboard — Settings,
+# Connectors, Client Hours, Benchmarks, Trends, Email Performance, the admin
+# pages, ~19 in all — renders through ``base_layout``'s two shell functions, and
+# both inlined ``SIDEBAR_CSS`` in a ``<style>`` block: ~37 KB of byte-identical
+# navy-drawer chrome (the sidebar, the site footer, the light scrollbars)
+# re-sent on every page load, for every client.
+#
+# It is one Python constant already shared by all of them, so there is nothing to
+# stitch: the composed body *is* ``SIDEBAR_CSS``. It gets its own digest URL so a
+# page can link it and the browser can hold it for a year.
+#
+# The dashboard keeps its own copy inside the bundle above rather than linking
+# this sheet too. Splitting the dashboard's stylesheet in two to share these
+# bytes would buy one 37 KB fetch on a first visit at the cost of a second
+# render-blocking request on every visit, and of splicing a second URL into the
+# middle of a cascade this module exists to keep intact.
+
+
+@lru_cache(maxsize=1)
+def shell_css() -> tuple[str, str]:
+    """``(digest, body)`` for the shared shell chrome.
+
+    Read lazily, like the fragments above: ``base_layout`` appends the footer and
+    scrollbar rules to ``SIDEBAR_CSS`` at the end of its module body, so reading
+    it at import time could catch the constant half-built.
+    """
+    from dashboard.renderers.base_layout import SIDEBAR_CSS
+
+    digest = hashlib.sha256(SIDEBAR_CSS.encode("utf-8")).hexdigest()[:12]
+    return digest, SIDEBAR_CSS
+
+
+def shell_css_url() -> str:
+    """Cache-busting URL for the shared shell chrome."""
+    return f"/assets/shell-{shell_css()[0]}.css"
 
 
 # ── JavaScript ──────────────────────────────────────────────────────────────
