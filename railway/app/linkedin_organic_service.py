@@ -103,12 +103,12 @@ def _resolve_token(access_token: str | None, env: LinkedInEnv | None) -> tuple[s
         # the API version for headers, not the global client_id/secret. This lets
         # a client whose token lives under its own slug sync even when the global
         # LINKEDIN_CLIENT_ID env is absent.
-        from linkedin_auth import _ENV_ALIASES, _get_env
+        from linkedin_auth import _ENV_ALIASES, _get_env, resolve_version
         env = LinkedInEnv(
             client_id="",
             client_secret="",
             refresh_token="",
-            version=_get_env(*_ENV_ALIASES["version"]) or "202509",
+            version=resolve_version(_get_env(*_ENV_ALIASES["version"])),
         )
         return access_token, env
     env = load_linkedin_env(require_token=True)
