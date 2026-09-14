@@ -62,6 +62,27 @@ class Entry:
 # Newest first. Add to the top; never edit or reorder what has shipped.
 ENTRIES: tuple[Entry, ...] = (
     Entry(
+        date="2026-09-14",
+        title="Campaign explorer's Conv. selector now actually lists Microsoft goals",
+        area="Client dashboards · Campaign explorer",
+        kind="fixed",
+        summary=(
+            "Microsoft/Bing conversion goals were silently missing from the "
+            "Conv. selector's action list, even for accounts tracking goals "
+            "and converting — Microsoft's Goals and Funnels report was being "
+            "requested with two invalid column names, so it failed on every "
+            "sync and never wrote the per-goal breakdown."
+        ),
+        details=(
+            "No dashboard change to look at directly — the fix is in what the "
+            "next Microsoft Ads sync pulls in.",
+            "Once a client re-syncs Microsoft Ads, its goal names (e.g. "
+            "\"HubSpot Form Submission\") start showing up in the selector "
+            "alongside Google and Meta actions, same as intended when this "
+            "shipped on 8/24.",
+        ),
+    ),
+    Entry(
         date="2026-09-13",
         title="The rest of the portal loads faster too, not just dashboards",
         area="Client dashboards · Admin",
