@@ -31,6 +31,10 @@ _INTENTIONALLY_ASYNC = {
     ("cron_security.py", "require_cron_secret"),
     # Builds an error page from strings; not_found_page imports nothing but `html`.
     ("main.py", "custom_http_exception_handler"),
+    # Constant protocol replies: MCP's required 405 for a server that offers no
+    # SSE stream, and the 204 for a session teardown that holds no state.
+    ("mcp_server.py", "mcp_no_stream"),
+    ("mcp_server.py", "mcp_end_session"),
 }
 
 

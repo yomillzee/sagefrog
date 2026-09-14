@@ -63,6 +63,28 @@ class Entry:
 ENTRIES: tuple[Entry, ...] = (
     Entry(
         date="2026-09-13",
+        title="Ask Claude what is in a client's Tag Manager",
+        area="Connectors · Google Tag Manager",
+        kind="new",
+        summary=(
+            "Claude can now read the live Tag Manager container for any client "
+            "with the GTM connector — which tags are live, which are paused, "
+            "and what fires them — so questions like \"is the Meta pixel still "
+            "on the site\" get answered in a sentence instead of a login."
+        ),
+        details=(
+            "Read-only: Claude can audit a container, never edit or publish one.",
+            "Answers come from the same recent audit the Connectors page shows, "
+            "so asking does not slow the portal down or use up Tag Manager's "
+            "daily API budget.",
+            "If that budget is exhausted, Claude answers from the last audit and "
+            "says when it was taken rather than failing.",
+            "Turned on per person in Claude's own connector settings — ask an "
+            "admin for the address and key.",
+        ),
+    ),
+    Entry(
+        date="2026-09-13",
         title="The rest of the portal loads faster too, not just dashboards",
         area="Client dashboards · Admin",
         kind="improved",

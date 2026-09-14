@@ -17,6 +17,7 @@ import dashboard_snapshots
 from admin import register_admin_routes
 from admin.shared import AVATAR_MAX_CHARS as _AVATAR_MAX_CHARS
 from dashboard.routes import register_dashboard_routes
+from mcp_server import register_mcp_routes
 from platforms import register_platform_routes
 import db_cache
 import warehouse
@@ -326,6 +327,7 @@ if web_users.enabled():
 register_dashboard_routes(app)
 register_admin_routes(app)
 register_platform_routes(app)
+register_mcp_routes(app)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.is_dir():
@@ -341,6 +343,7 @@ _HTML_404_API_PREFIXES = (
     "/openapi",
     "/health",
     "/cron",
+    "/mcp",
 )
 
 
