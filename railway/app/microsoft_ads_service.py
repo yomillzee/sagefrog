@@ -394,8 +394,8 @@ def fetch_goal_daily_metrics(
             "AdGroupName",
             "Goal",
             "GoalId",
-            "Conversions",
-            "Revenue",
+            "AllConversionsQualified",
+            "AllRevenue",
         ],
         "Scope": {"AccountIds": [int(str(account_id).strip())]},
         "Time": {
@@ -425,8 +425,8 @@ def fetch_goal_daily_metrics(
             "goal_id": str(raw.get("GoalId") or "").strip(),
             "goal_name": goal_name,
             "metric_date": metric_date,
-            "conversions": _to_float(raw.get("Conversions")),
-            "conversion_value": _to_float(raw.get("Revenue")),
+            "conversions": _to_float(raw.get("AllConversionsQualified")),
+            "conversion_value": _to_float(raw.get("AllRevenue")),
         })
     return out
 
